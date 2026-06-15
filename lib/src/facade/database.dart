@@ -1,20 +1,116 @@
 part of '../../winche_database.dart';
 
+/// True on the web, where Dart's numeric types collapse so `0` and `0.0` are
+/// identical. Used to make `directoryResolver` optional on the web, which uses
+/// IndexedDB and needs no file-system path.
+const bool _kIsWeb = identical(0, 0.0);
+
+/// All configuration for a [WincheDatabase] in one object — connection knobs,
+/// local-store selection, and sync policy. Mirrors `winche_storage`'s
+/// `WincheStorageConfig`.
+///
+/// Advanced transport-injection hooks (custom channel factory / sleeper) are not
+/// here; use [ConnectionConfig] via [WincheDatabase.withStore] for those.
+final class WincheDatabaseConfig {
+  /// The WebSocket URI, e.g. `ws://host/documents/ws`.
+  final Uri uri;
+
+  /// Supplies the auth token added as the `?access_token=` query parameter on
+  /// every (re)dial. Re-read per dial, so a rotated token is picked up.
+  final FutureOr<String> Function()? tokenProvider;
+
+  /// Keep-alive ping interval. Defaults to 30 seconds.
+  final Duration pingInterval;
+
+  /// Whether to auto-reconnect on unexpected disconnect. Defaults to true.
+  final bool autoReconnect;
+
+  /// Maximum backoff between reconnect attempts. Defaults to 30 seconds.
+  final Duration maxBackoff;
+
+  /// Maximum outbound write-frame size in bytes. Defaults to 1 MiB.
+  final int maxFrameBytes;
+
+  /// Use a non-persistent in-memory store instead of Hive. Defaults to false.
+  final bool inMemory;
+
+  /// Resolves the Hive directory, lazily on first store access and cached.
+  /// Required on native platforms; ignored on the web (IndexedDB). Must be null
+  /// when [inMemory] is true.
+  final Future<String> Function()? directoryResolver;
+
+  /// Write-conflict resolution policy. Defaults to [ConflictPolicy.manual].
+  final ConflictPolicy conflictPolicy;
+
+  const WincheDatabaseConfig({
+    required this.uri,
+    this.tokenProvider,
+    this.pingInterval = const Duration(seconds: 30),
+    this.autoReconnect = true,
+    this.maxBackoff = const Duration(seconds: 30),
+    this.maxFrameBytes = 1 << 20,
+    this.inMemory = false,
+    this.directoryResolver,
+    this.conflictPolicy = ConflictPolicy.manual,
+  });
+}
+
 /// The entry point for the Winche Database Dart SDK.
 ///
 /// Connects lazily on the first operation.
 final class WincheDatabase {
-  /// Creates a database client. Offline support is always on: reads and live
-  /// listeners are served from a local cache + pending-write overlay, and writes
-  /// are queued and synced. [store] defaults to a non-persistent
-  /// [MemoryLocalStore]; pass a durable store (e.g. `HiveLocalStore`) to persist
-  /// across restarts.
-  WincheDatabase(
-    ConnectionConfig config, {
-    LocalStore? store,
+  /// Creates a database client from a [WincheDatabaseConfig]. Offline support is
+  /// always on: reads and live listeners are served from a local cache +
+  /// pending-write overlay, and writes are queued and synced.
+  ///
+  /// Persistence is **on by default** via Hive (boxes namespaced `winche`). On
+  /// native platforms [WincheDatabaseConfig.directoryResolver] is **required** —
+  /// it supplies the Hive directory, resolved lazily on first store access and
+  /// cached. On the web it is ignored (Hive uses IndexedDB). Set
+  /// [WincheDatabaseConfig.inMemory] to use a non-persistent [MemoryLocalStore]
+  /// instead (then `directoryResolver` must be null).
+  factory WincheDatabase(WincheDatabaseConfig config) {
+    if (config.inMemory && config.directoryResolver != null) {
+      throw ArgumentError('directoryResolver has no effect with inMemory: true.');
+    }
+    if (!config.inMemory && !_kIsWeb && config.directoryResolver == null) {
+      throw ArgumentError(
+          'directoryResolver is required on native platforms (web uses IndexedDB).');
+    }
+    final store = config.inMemory
+        ? MemoryLocalStore()
+        : LazyLocalStore(() async => HiveLocalStore.open(
+              'winche',
+              directory: _kIsWeb ? null : await config.directoryResolver!(),
+            ));
+    return WincheDatabase._(
+      ConnectionConfig(
+        uri: config.uri,
+        tokenProvider: config.tokenProvider,
+        pingInterval: config.pingInterval,
+        autoReconnect: config.autoReconnect,
+        maxBackoff: config.maxBackoff,
+        maxFrameBytes: config.maxFrameBytes,
+      ),
+      store,
+      config.conflictPolicy,
+    );
+  }
+
+  /// Advanced / testing: creates a client over an explicitly supplied [store].
+  factory WincheDatabase.withStore(
+    ConnectionConfig config,
+    LocalStore store, {
     ConflictPolicy conflictPolicy = ConflictPolicy.manual,
-  })  : _transport = WsTransport(config),
-        _store = store ?? MemoryLocalStore() {
+  }) =>
+      WincheDatabase._(config, store, conflictPolicy);
+
+  WincheDatabase._(
+    ConnectionConfig config,
+    LocalStore store,
+    ConflictPolicy conflictPolicy,
+  )   : _transport = WsTransport(config),
+        _store = store {
     _cache = DocumentCache(_store);
     _queue = WriteQueue(_store);
     _changes = LocalChangeNotifier();
@@ -185,10 +281,11 @@ final class WincheDatabase {
     return WriteBatch(this);
   }
 
-  /// Closes the database connection and the sync controller.
+  /// Closes the database connection, the sync controller, and the local store.
   void close() {
     _sync.dispose();
     _changes.dispose();
     _transport.dispose();
+    unawaited(_store.close());
   }
 }

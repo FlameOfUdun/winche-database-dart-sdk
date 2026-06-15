@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.0
+
+- **Breaking:** `WincheDatabase` now takes a single `WincheDatabaseConfig` —
+  connection options + local-store selection + conflict policy in one object,
+  mirroring `winche_storage`'s `WincheStorageConfig`. Replaces the previous
+  `WincheDatabase(ConnectionConfig, {store, inMemory, ...})` constructor.
+- **Breaking:** persistence is now **on by default** (Hive). On native platforms a
+  `directoryResolver` is required; the Hive directory is resolved **lazily** on
+  first store access (web uses IndexedDB, no path needed). Set `inMemory: true`
+  for the previous non-persistent behavior.
+- `directoryResolver` lets the Hive directory be resolved lazily, so apps no
+  longer need to `await HiveLocalStore.open(...)` before constructing the database.
+- Added `LazyLocalStore`, a `LocalStore` decorator that opens its underlying store
+  on first use (memoized; safe under concurrent first-callers).
+- `WincheDatabase.close()` now also closes the database-owned local store.
+- Custom store injection moved to `WincheDatabase.withStore(connectionConfig, store)`.
+
 ## 1.1.0
 
 - `ConnectionConfig.tokenProvider` now accepts an async callback

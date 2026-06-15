@@ -4,11 +4,11 @@ import 'package:winche_database/winche_database.dart';
 import '../offline/fake_local_store.dart';
 
 void main() {
-  WincheDatabase offlineDb(LocalStore store) => WincheDatabase(
+  WincheDatabase offlineDb(LocalStore store) => WincheDatabase.withStore(
         ConnectionConfig(
             uri: Uri.parse('ws://localhost:1/documents/ws'),
             autoReconnect: false),
-        store: store,
+        store,
       );
 
   test('offline set acks locally and is visible to get (hasPendingWrites)',

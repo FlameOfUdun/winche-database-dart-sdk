@@ -5,11 +5,11 @@ import '../offline/fake_local_store.dart';
 
 void main() {
   WincheDatabase offlineDb(LocalStore store, {ConflictPolicy? policy}) =>
-      WincheDatabase(
+      WincheDatabase.withStore(
         ConnectionConfig(
             uri: Uri.parse('ws://localhost:1/documents/ws'),
             autoReconnect: false),
-        store: store,
+        store,
         conflictPolicy: policy ?? ConflictPolicy.manual,
       );
 
@@ -36,10 +36,9 @@ void main() {
     db.close();
   });
 
-  test('a fresh db with the default in-memory store has no pending writes',
-      () async {
-    final db = WincheDatabase(
-        ConnectionConfig(uri: Uri.parse('ws://localhost:1/documents/ws')));
+  test('a fresh in-memory db has no pending writes', () async {
+    final db = WincheDatabase(WincheDatabaseConfig(
+        uri: Uri.parse('ws://localhost:1/documents/ws'), inMemory: true));
     expect(await db.hasPendingWrites, isFalse);
     db.close();
   });

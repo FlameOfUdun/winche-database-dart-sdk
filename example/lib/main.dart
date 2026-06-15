@@ -83,7 +83,11 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late final _db = WincheDatabase(
-    ConnectionConfig(uri: Uri.parse(kUri), autoReconnect: widget.autoConnect),
+    WincheDatabaseConfig(
+      uri: Uri.parse(kUri),
+      autoReconnect: widget.autoConnect,
+      inMemory: true,
+    ),
   );
 
   StreamSubscription<SyncEvent>? _syncSub;

@@ -125,7 +125,7 @@ Future<String> _await(String? Function() probe,
 Future<void> main(List<String> args) async {
   final wsUrl = args.isNotEmpty ? args.first : _defaultWs;
 
-  db = WincheDatabase(ConnectionConfig(uri: Uri.parse(wsUrl)));
+  db = WincheDatabase(WincheDatabaseConfig(uri: Uri.parse(wsUrl), inMemory: true));
   _initSync();
 
   print('Winche SDK feature smoke test');

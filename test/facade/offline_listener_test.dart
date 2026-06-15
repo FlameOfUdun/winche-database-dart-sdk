@@ -6,11 +6,11 @@ import '../offline/fake_local_store.dart';
 void main() {
   late WincheDatabase db;
   setUp(() {
-    db = WincheDatabase(
+    db = WincheDatabase.withStore(
       ConnectionConfig(
           uri: Uri.parse('ws://localhost:1/documents/ws'),
           autoReconnect: false),
-      store: FakeLocalStore(),
+      FakeLocalStore(),
     );
   });
   tearDown(() => db.close());

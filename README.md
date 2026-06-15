@@ -14,7 +14,7 @@ document store over a single WebSocket connection.
 - **Optimistic transactions** with automatic retry
 - **Offline-first**: every read is served from a local cache + pending-write
   overlay; every write is queued locally and synced in the background
-- **Durable persistence** (Hive) or in-memory
+- **Durable persistence** (Hive, on by default) or in-memory
 
 For the authoritative wire-protocol specification, see the server repository's
 [PROTOCOL.md](https://github.com/FlameOfUdun/Winche-Database/blob/main/docs/PROTOCOL.md).
@@ -50,23 +50,25 @@ flowchart TD
 import 'package:winche_database/winche_database.dart';
 
 final db = WincheDatabase(
-  ConnectionConfig(
+  WincheDatabaseConfig(
     uri: Uri.parse('ws://localhost:5183/documents/ws'),
-    tokenProvider: () => currentAuthToken, // optional
+    tokenProvider: () => currentAuthToken,     // optional
+    directoryResolver: () async => appDir,     // required on native (Hive directory)
   ),
-  // store: omitted -> in-memory; pass HiveLocalStore.open(...) for durability
 );
 ```
 
-The connection dials lazily on the first operation. Authentication happens at
-the WebSocket upgrade via an `?access_token=` query parameter built from
-`ConnectionConfig.tokenProvider`. There is **no in-band auth-refresh**: to rotate
-an expired token, return the new value from `tokenProvider` — the reconnect path
-picks it up automatically.
+The connection dials lazily on the first operation. Authentication happens at the
+WebSocket upgrade via an `?access_token=` query parameter built from
+`tokenProvider`. There is **no in-band auth-refresh**: to rotate an expired token,
+return the new value from `tokenProvider` — the reconnect path picks it up
+automatically.
 
-`ConnectionConfig` options: `uri`, `tokenProvider`, `pingInterval` (default 30 s),
-`autoReconnect` (default true), `maxBackoff` (default 30 s), `maxFrameBytes`
-(default 1 MiB — see [Writes](#writes-offline-first)).
+All options live on `WincheDatabaseConfig`: `uri`, `tokenProvider`, `pingInterval`
+(default 30 s), `autoReconnect` (default true), `maxBackoff` (default 30 s),
+`maxFrameBytes` (default 1 MiB — see [Writes](#writes-offline-first)), `inMemory`
+(default false), `directoryResolver` (Hive directory; see
+[Persistence](#persistence)), and `conflictPolicy` (default `manual`).
 
 ---
 
@@ -266,7 +268,7 @@ final pending = await db.hasPendingWrites;
 await db.clearPersistence();       // wipe local cache + queue
 ```
 
-Conflict handling is governed by `ConflictPolicy` passed to the constructor:
+Conflict handling is governed by `WincheDatabaseConfig.conflictPolicy`:
 `manual` (default — pause and surface a `WriteConflict`), `clientWins`, or
 `serverWins`.
 
@@ -335,13 +337,26 @@ Operations throw a `WincheException` subclass on failure:
 
 ## Persistence
 
-The default `MemoryLocalStore` is non-durable (state is lost on exit). For
-persistence across restarts, pass a `HiveLocalStore`:
+Persistence is **on by default** via Hive. The Hive directory is resolved lazily
+on first store access from `WincheDatabaseConfig.directoryResolver` — **required
+on native** platforms, ignored on the web (which uses IndexedDB):
 
 ```dart
-final store = await HiveLocalStore.open('winche', directory: appDir);
-final db = WincheDatabase(config, store: store);
+final db = WincheDatabase(WincheDatabaseConfig(
+  uri: uri,
+  directoryResolver: () async => (await getApplicationDocumentsDirectory()).path,
+));
 ```
+
+For a non-durable in-memory store (state lost on exit), set `inMemory: true`
+(then `directoryResolver` must be omitted):
+
+```dart
+final db = WincheDatabase(WincheDatabaseConfig(uri: uri, inMemory: true));
+```
+
+Advanced / testing: inject a custom `LocalStore` (using the lower-level
+`ConnectionConfig`) with `WincheDatabase.withStore(connectionConfig, store)`.
 
 ---
 

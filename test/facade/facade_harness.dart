@@ -25,7 +25,7 @@ Future<void> pump([int times = 6]) async {
 class FacadeHarness {
   FacadeHarness({bool autoReconnect = false, LocalStore? store})
       : channel = FakeChannel()..startCapture() {
-    db = WincheDatabase(
+    db = WincheDatabase.withStore(
       ConnectionConfig(
         uri: Uri.parse('ws://fake/documents/ws'),
         channelFactory: (_) {
@@ -40,7 +40,7 @@ class FacadeHarness {
         pingInterval: const Duration(hours: 1), // disable keepalive pings
         autoReconnect: autoReconnect,
       ),
-      store: store, // null → default in-memory store (offline is always on)
+      store ?? MemoryLocalStore(), // null → default in-memory store (offline is always on)
     );
     channel.onClientFrame = _route;
   }

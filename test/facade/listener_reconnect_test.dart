@@ -15,16 +15,19 @@ import 'facade_harness.dart' show pump, wireDoc, wireFields;
 /// they arrived on.
 class ReconnectHarness {
   ReconnectHarness() {
-    db = WincheDatabase(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
-      channelFactory: (_) => _dial(),
-      sleeper: (d) {
-        sleeps.add(d);
-        return Future<void>.value();
-      },
-      pingInterval: const Duration(hours: 1),
-      autoReconnect: true,
-    ));
+    db = WincheDatabase.withStore(
+      ConnectionConfig(
+        uri: Uri.parse('ws://fake/documents/ws'),
+        channelFactory: (_) => _dial(),
+        sleeper: (d) {
+          sleeps.add(d);
+          return Future<void>.value();
+        },
+        pingInterval: const Duration(hours: 1),
+        autoReconnect: true,
+      ),
+      MemoryLocalStore(),
+    );
   }
 
   late final WincheDatabase db;
