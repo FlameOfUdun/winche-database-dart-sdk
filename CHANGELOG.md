@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0
+
+- `ConnectionConfig.tokenProvider` now accepts an async callback
+  (`FutureOr<String> Function()`), so auth tokens can be fetched or refreshed
+  asynchronously on each (re)dial. Synchronous providers continue to work
+  unchanged.
+
 ## 1.0.0
 
 Initial release.

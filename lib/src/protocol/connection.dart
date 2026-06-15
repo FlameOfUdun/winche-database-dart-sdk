@@ -42,7 +42,7 @@ final class ConnectionConfig {
   /// Supplies the auth token used as the `?access_token=` query parameter on
   /// every (re)dial. To rotate an expired token, return the new value here — the
   /// reconnect path re-reads it automatically.
-  final String Function()? tokenProvider;
+  final FutureOr<String> Function()? tokenProvider;
 
   /// Interval for keep-alive pings. Defaults to 30 seconds.
   final Duration pingInterval;
@@ -63,7 +63,7 @@ final class ConnectionConfig {
   final FutureOr<WebSocketChannel> Function(Uri)? channelFactory;
 
   /// For testing: allows injecting a custom sleeper for backoff delays.
-  final Future<void> Function(Duration)? sleeper;
+  final FutureOr<void> Function(Duration)? sleeper;
 }
 
 /// WebSocket protocol connection to a Winche Database server (PROTOCOL §7).
@@ -74,7 +74,7 @@ class ProtocolConnection {
 
   final ConnectionConfig config;
   final FutureOr<WebSocketChannel> Function(Uri) _channelFactory;
-  final Future<void> Function(Duration) _sleeper;
+  final FutureOr<void> Function(Duration) _sleeper;
 
   static Future<WebSocketChannel> _defaultFactory(Uri uri) async {
     final channel = WebSocketChannel.connect(uri);
@@ -146,8 +146,8 @@ class ProtocolConnection {
   /// Returns the dial URI with the current auth token (if any) added as the
   /// `access_token` query parameter (auth is at the WS upgrade — there is no
   /// in-band hello/auth message).
-  Uri _dialUri() {
-    final token = config.tokenProvider?.call();
+  FutureOr<Uri> _dialUri() async {
+    final token = await config.tokenProvider?.call();
     if (token == null) return config.uri;
     return config.uri.replace(queryParameters: {
       ...config.uri.queryParameters,
@@ -172,7 +172,7 @@ class ProtocolConnection {
   }) async {
     _setState(ConnectionState.connecting);
     try {
-      _channel = await _channelFactory(_dialUri());
+      _channel = await _channelFactory(await _dialUri());
     } catch (e) {
       // Channel factory threw (e.g. WebSocketChannelException on Windows when
       // the remote port is refused before the stream is even subscribed to).
@@ -426,7 +426,7 @@ class ProtocolConnection {
 
       // Try to establish a new connection.
       try {
-        _channel = await _channelFactory(_dialUri());
+        _channel = await _channelFactory(await _dialUri());
         _sub = _channel!.stream.listen(
           _onFrame,
           onError: _onError,
