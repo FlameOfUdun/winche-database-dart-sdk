@@ -1,0 +1,13 @@
+# Keep the published package lean — exclude the example's generated/platform
+# scaffolding (the example source in example/lib still ships) and dev tooling.
+example/android/
+example/ios/
+example/linux/
+example/macos/
+example/windows/
+example/web/
+example/.metadata
+example/devtools_options.yaml
+example/analysis_options.yaml
+devtools_options.yaml
+tool/

@@ -1,0 +1,24 @@
+name: winche_database
+description: Type-safe Dart client for Winche Database — an offline-first, real-time document store over a single WebSocket connection.
+version: 1.0.0
+repository: https://github.com/FlameOfUdun/winche-database-dart-sdk
+issue_tracker: https://github.com/FlameOfUdun/winche-database-dart-sdk/issues
+
+topics:
+  - database
+  - realtime
+  - websocket
+  - offline
+  - nosql
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  web_socket_channel: ^3.0.0
+  hive_ce: ^2.19.3
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^5.0.0
+  stream_channel: ^2.1.0
