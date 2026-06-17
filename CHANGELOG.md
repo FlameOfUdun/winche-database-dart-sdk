@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.0
+
+- **Breaking:** `WriteBatch.set` and `Transaction.set` now accept typed `T data`
+  and convert it through the reference's converter, mirroring
+  `DocumentReference.set`. Untyped references use the identity converter, so
+  map-based call sites are unchanged; typed-converter call sites must now pass a
+  `T` instead of a pre-built `Map`.
+
 ## 2.0.0
 
 - **Breaking:** `WincheDatabase` now takes a single `WincheDatabaseConfig` —
