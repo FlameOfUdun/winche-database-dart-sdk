@@ -16,12 +16,12 @@ final class WriteBatch {
   /// Stages a set (replace or merge) operation.
   void set<T>(
     DocumentReference<T> ref,
-    Map<String, Object?> data, {
+    T data, {
     bool merge = false,
     Precondition? precondition,
   }) {
-    _writes.add(
-        stageSet(ref.path, data, merge: merge, precondition: precondition));
+    _writes.add(stageSet(ref.path, ref._converter.toMap(data),
+        merge: merge, precondition: precondition));
   }
 
   /// Stages an update (patch) operation.

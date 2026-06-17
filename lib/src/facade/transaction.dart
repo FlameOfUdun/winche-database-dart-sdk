@@ -34,13 +34,13 @@ final class Transaction {
   /// Stages a set operation.
   void set<T>(
     DocumentReference<T> ref,
-    Map<String, Object?> data, {
+    T data, {
     bool merge = false,
     Precondition? precondition,
   }) {
     _writesStarted = true;
-    _writes.add(
-        stageSet(ref.path, data, merge: merge, precondition: precondition));
+    _writes.add(stageSet(ref.path, ref._converter.toMap(data),
+        merge: merge, precondition: precondition));
   }
 
   /// Stages an update operation.
