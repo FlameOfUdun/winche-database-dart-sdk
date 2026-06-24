@@ -316,6 +316,23 @@ Map<String, Object?> countFrame(String id, QuerySpec query) => {
       'query': query.toJson(),
     };
 
+/// `{"type": "aggregate", "id": "...", "query": {...}, "aggregations": [...]}`
+Map<String, Object?> aggregateFrame(
+        String id, QuerySpec query, List<Object?> aggregations) =>
+    {
+      'type': 'aggregate',
+      'id': id,
+      'query': query.toJson(),
+      'aggregations': aggregations,
+    };
+
+/// `{"type": "doc.listen", "id": "...", "path": "...", "resumeToken"?: ...}`
+Map<String, Object?> docListenFrame(String id, String path, {int? resumeToken}) {
+  final frame = <String, Object?>{'type': 'doc.listen', 'id': id, 'path': path};
+  if (resumeToken != null) frame['resumeToken'] = resumeToken;
+  return frame;
+}
+
 /// `{"type": "write", "id": "...", "writes": [...]}` (PROTOCOL §7.4)
 Map<String, Object?> writeFrame(String id, List<Write> writes) => {
       'type': 'write',

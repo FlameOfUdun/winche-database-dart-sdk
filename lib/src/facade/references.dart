@@ -91,17 +91,10 @@ final class DocumentReference<T> {
   /// Returns a [Stream] that emits a [DocumentSnapshot] whenever the document
   /// changes.
   ///
-  /// Implemented as a query on `__name__ == path` mapped to [DocumentSnapshot].
-  /// Emits a non-existent snapshot when the document is absent.
-  ///
-  /// No `limit` is applied: `__name__` equality matches at most one document, so
-  /// a limit is redundant — and a `limit` on a live listener can interact badly
-  /// with server-side per-document read rules (the limit may be applied before
-  /// the read filter), dropping the very document being watched.
-  Stream<DocumentSnapshot<T>> snapshots() {
-    return parent.where('__name__', isEqualTo: path).snapshots().map((qs) =>
-        qs.docs.isEmpty ? DocumentSnapshot<T>._missing(this) : qs.docs.first);
-  }
+  /// Backed by the dedicated `doc.listen` server subscription, with pending
+  /// local writes overlaid for latency compensation. Emits a non-existent
+  /// snapshot when the document is absent.
+  Stream<DocumentSnapshot<T>> snapshots() => _LiveDocument<T>(_db, this).stream();
 
   @override
   String toString() => 'DocumentReference($path)';
@@ -395,6 +388,44 @@ final class QueryReference<T> {
     final result = await _db._transport.request(countFrame('', _spec));
     final n = result['count'];
     return n is num ? n.toInt() : 0;
+  }
+
+  /// Runs server-side [aggregations] over this query, returning a map keyed by
+  /// each aggregation's `alias`.
+  ///
+  /// Server-only, like [count]: bypasses the local cache, requires a live
+  /// connection (throws when offline), honors `where`/`orderBy`/`limit`, and
+  /// rejects cursor constraints.
+  Future<Map<String, Object?>> aggregate(List<Aggregate> aggregations) async {
+    if (aggregations.isEmpty) {
+      throw ArgumentError('aggregate() requires at least one aggregation.');
+    }
+    if (_spec.start != null || _spec.end != null) {
+      throw UnsupportedError(
+        'aggregate() does not support cursor constraints. '
+        'Remove startAt(), startAfter(), endAt(), and endBefore() before aggregate().',
+      );
+    }
+    final result = await _db._transport.request(
+        aggregateFrame('', _spec, [for (final a in aggregations) a.toJson()]));
+    final body = (result['result'] as Map).cast<String, Object?>();
+    return {
+      for (final e in body.entries) e.key: fromValue(Value.fromJson(e.value)),
+    };
+  }
+
+  /// Sums [field] over matching documents (server-side). Returns `0` for an
+  /// empty result. Shorthand for a single-aggregation [aggregate].
+  Future<num> sum(String field) async {
+    final r = await aggregate([Aggregate.sum(field, alias: r'$value')]);
+    return (r[r'$value'] as num?) ?? 0;
+  }
+
+  /// Averages [field] over matching documents (server-side). Returns `null` for
+  /// an empty result. Shorthand for a single-aggregation [aggregate].
+  Future<num?> average(String field) async {
+    final r = await aggregate([Aggregate.average(field, alias: r'$value')]);
+    return r[r'$value'] as num?;
   }
 
   /// The underlying [QuerySpec] (for testing and listener use).

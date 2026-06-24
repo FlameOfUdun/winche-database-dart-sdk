@@ -6,7 +6,7 @@ import 'facade_harness.dart';
 Map<String, Object?> snapshotFrame(
   String subId,
   List<Map<String, Object?>> documents, {
-  required int resumeToken,
+  int? resumeToken,
   String readTime = '2026-06-08T12:00:00+00:00',
 }) =>
     {
@@ -14,58 +14,49 @@ Map<String, Object?> snapshotFrame(
       'subscriptionId': subId,
       'documents': documents,
       'readTime': readTime,
-      'resumeToken': resumeToken,
+      if (resumeToken != null) 'resumeToken': resumeToken,
     };
 
 void main() {
   late FacadeHarness h;
   setUp(() => h = FacadeHarness());
+  tearDown(() => h.close());
 
-  void installListenHandler({String subId = 'sub-1'}) {
+  void installDocListenHandler({String subId = 'sub-1'}) {
     h.handler = (f) {
       switch (f['type']) {
-        case 'listen':
+        case 'doc.listen':
           h.respond(f, {'subscriptionId': subId});
-        case 'unlisten':
-          h.respond(f, const {});
         default:
           h.respond(f, const {});
       }
     };
   }
 
-  test('subscribes via a query on the parent filtered by __name__ (no limit)',
+  test('subscribes via doc.listen with the document path (not a query listen)',
       () async {
-    installListenHandler();
+    installDocListenHandler();
     final sub = h.db.doc('users/u1').snapshots().listen((_) {});
     await pump();
 
-    final listen = h.requests.firstWhere((f) => f['type'] == 'listen');
-    final query = listen['query'] as Map<String, Object?>;
-    expect(query['collection'], 'users');
-    expect(query['where'], {
-      'field': '__name__',
-      'op': 'eq',
-      'value': {'stringValue': 'users/u1'},
-    });
-    // No limit: __name__ equality matches at most one document, and a limit on a
-    // live listener can interact badly with server-side read filtering.
-    expect(query.containsKey('limit'), isFalse);
+    final docListen =
+        h.requests.firstWhere((f) => f['type'] == 'doc.listen');
+    expect(docListen['path'], 'users/u1');
+    expect(h.requests.any((f) => f['type'] == 'listen'), isFalse,
+        reason: 'doc.snapshots must use doc.listen, not a query listen');
 
     await sub.cancel();
   });
 
   test('emits a present DocumentSnapshot when the document exists', () async {
-    installListenHandler();
+    installDocListenHandler();
     final events = <DocumentSnapshot<Map<String, Object?>>>[];
     final sub = h.db.doc('users/u1').snapshots().listen(events.add);
     await pump();
 
     h.push(snapshotFrame(
       'sub-1',
-      [
-        wireDoc('users/u1', wireFields({'n': 1}))
-      ],
+      [wireDoc('users/u1', wireFields({'n': 1}))],
       resumeToken: 1,
     ));
     await pump();
@@ -80,7 +71,7 @@ void main() {
   });
 
   test('emits a missing snapshot when the document is absent', () async {
-    installListenHandler();
+    installDocListenHandler();
     final events = <DocumentSnapshot<Map<String, Object?>>>[];
     final sub = h.db.doc('users/u1').snapshots().listen(events.add);
     await pump();
@@ -97,7 +88,7 @@ void main() {
   });
 
   test('emits again when the document changes', () async {
-    installListenHandler();
+    installDocListenHandler();
     final events = <DocumentSnapshot<Map<String, Object?>>>[];
     final sub = h.db.doc('users/u1').snapshots().listen(events.add);
     await pump();
@@ -128,7 +119,7 @@ void main() {
   });
 
   test('applies the converter to emitted snapshots', () async {
-    installListenHandler();
+    installDocListenHandler();
     final ref = h.db.doc('users/u1').withConverter(
           Converter<int>((d) => d['n'] as int, (v) => {'n': v}),
         );
@@ -138,9 +129,7 @@ void main() {
 
     h.push(snapshotFrame(
       'sub-1',
-      [
-        wireDoc('users/u1', wireFields({'n': 7}))
-      ],
+      [wireDoc('users/u1', wireFields({'n': 7}))],
       resumeToken: 1,
     ));
     await pump();
@@ -150,8 +139,8 @@ void main() {
     await sub.cancel();
   });
 
-  test('cancelling the subscription unlistens', () async {
-    installListenHandler();
+  test('cancelling the subscription sends unlisten', () async {
+    installDocListenHandler();
     final sub = h.db.doc('users/u1').snapshots().listen((_) {});
     await pump();
     h.push(snapshotFrame('sub-1', const [], resumeToken: 1));
