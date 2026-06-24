@@ -9,7 +9,7 @@ import 'src/offline/document_cache.dart';
 import 'src/offline/effective_view.dart';
 import 'src/offline/local_change_notifier.dart';
 import 'src/offline/local_query_engine.dart';
-import 'src/offline/hive_local_store.dart';
+import 'src/offline/sembast_local_store.dart';
 import 'src/offline/lazy_local_store.dart';
 import 'src/offline/local_store.dart';
 import 'src/offline/memory_local_store.dart';
@@ -37,7 +37,7 @@ export 'src/protocol/writes.dart';
 export 'src/transport/transport.dart' show Transport;
 export 'src/offline/local_store.dart' show LocalStore;
 export 'src/offline/memory_local_store.dart' show MemoryLocalStore;
-export 'src/offline/hive_local_store.dart' show HiveLocalStore;
+export 'src/offline/sembast_local_store.dart' show SembastLocalStore;
 export 'src/offline/lazy_local_store.dart' show LazyLocalStore;
 export 'src/offline/read_coordinator.dart' show Source, GetOptions;
 export 'src/offline/sync_event.dart'

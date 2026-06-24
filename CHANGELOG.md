@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.0.0
+
+- **Breaking:** the durable persistence backend is now **sembast** instead of
+  Hive. `HiveLocalStore` is removed and replaced by `SembastLocalStore`; the
+  `hive_ce` dependency is dropped in favour of `sembast`/`sembast_web`. This
+  removes Hive's 255-character key limit, so long/deeply-nested document paths
+  are stored as-is. Persistence remains on by default, with the same
+  `directoryResolver` contract (required on native, ignored on web/IndexedDB).
+  No data migration is provided.
+
 ## 3.0.0
 
 - **Breaking:** `WriteBatch.set` and `Transaction.set` now accept typed `T data`

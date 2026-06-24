@@ -31,10 +31,10 @@ final class WincheDatabaseConfig {
   /// Maximum outbound write-frame size in bytes. Defaults to 1 MiB.
   final int maxFrameBytes;
 
-  /// Use a non-persistent in-memory store instead of Hive. Defaults to false.
+  /// Use a non-persistent in-memory store instead of sembast. Defaults to false.
   final bool inMemory;
 
-  /// Resolves the Hive directory, lazily on first store access and cached.
+  /// Resolves the sembast directory, lazily on first store access and cached.
   /// Required on native platforms; ignored on the web (IndexedDB). Must be null
   /// when [inMemory] is true.
   final Future<String> Function()? directoryResolver;
@@ -63,10 +63,10 @@ final class WincheDatabase {
   /// always on: reads and live listeners are served from a local cache +
   /// pending-write overlay, and writes are queued and synced.
   ///
-  /// Persistence is **on by default** via Hive (boxes namespaced `winche`). On
+  /// Persistence is **on by default** via sembast (database file `winche.db`). On
   /// native platforms [WincheDatabaseConfig.directoryResolver] is **required** —
-  /// it supplies the Hive directory, resolved lazily on first store access and
-  /// cached. On the web it is ignored (Hive uses IndexedDB). Set
+  /// it supplies the sembast directory, resolved lazily on first store access and
+  /// cached. On the web it is ignored (sembast uses IndexedDB). Set
   /// [WincheDatabaseConfig.inMemory] to use a non-persistent [MemoryLocalStore]
   /// instead (then `directoryResolver` must be null).
   factory WincheDatabase(WincheDatabaseConfig config) {
@@ -79,7 +79,7 @@ final class WincheDatabase {
     }
     final store = config.inMemory
         ? MemoryLocalStore()
-        : LazyLocalStore(() async => HiveLocalStore.open(
+        : LazyLocalStore(() async => SembastLocalStore.open(
               'winche',
               directory: _kIsWeb ? null : await config.directoryResolver!(),
             ));

@@ -3,7 +3,7 @@ import 'local_store.dart';
 /// An in-memory [LocalStore] — the default store when none is supplied.
 ///
 /// Holds the cache, write queue, and metadata in memory only: state is lost when
-/// the process exits. Pass a durable store (e.g. `HiveLocalStore`) for
+/// the process exits. Pass a durable store (e.g. `SembastLocalStore`) for
 /// persistence across restarts. Works identically on native and web.
 class MemoryLocalStore implements LocalStore {
   final Map<String, Map<String, Object?>> _docs = {};

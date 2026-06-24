@@ -14,7 +14,7 @@ document store over a single WebSocket connection.
 - **Optimistic transactions** with automatic retry
 - **Offline-first**: every read is served from a local cache + pending-write
   overlay; every write is queued locally and synced in the background
-- **Durable persistence** (Hive, on by default) or in-memory
+- **Durable persistence** (sembast, on by default) or in-memory
 
 For the authoritative wire-protocol specification, see the server repository's
 [PROTOCOL.md](https://github.com/FlameOfUdun/Winche-Database/blob/main/docs/PROTOCOL.md).
@@ -38,7 +38,7 @@ flowchart TD
   Reads --> T[WsTransport]
   Sync --> T
   T <-->|WebSocket| Server[(Winche Database server)]
-  Cache --- Store[(LocalStore<br/>Memory or Hive)]
+  Cache --- Store[(LocalStore<br/>Memory or sembast)]
   Queue --- Store
 ```
 
@@ -53,7 +53,7 @@ final db = WincheDatabase(
   WincheDatabaseConfig(
     uri: Uri.parse('ws://localhost:5183/documents/ws'),
     tokenProvider: () => currentAuthToken,     // optional
-    directoryResolver: () async => appDir,     // required on native (Hive directory)
+    directoryResolver: () async => appDir,     // required on native (sembast directory)
   ),
 );
 ```
@@ -67,7 +67,7 @@ automatically.
 All options live on `WincheDatabaseConfig`: `uri`, `tokenProvider`, `pingInterval`
 (default 30 s), `autoReconnect` (default true), `maxBackoff` (default 30 s),
 `maxFrameBytes` (default 1 MiB — see [Writes](#writes-offline-first)), `inMemory`
-(default false), `directoryResolver` (Hive directory; see
+(default false), `directoryResolver` (sembast directory; see
 [Persistence](#persistence)), and `conflictPolicy` (default `manual`).
 
 ---
@@ -337,7 +337,7 @@ Operations throw a `WincheException` subclass on failure:
 
 ## Persistence
 
-Persistence is **on by default** via Hive. The Hive directory is resolved lazily
+Persistence is **on by default** via sembast. The sembast directory is resolved lazily
 on first store access from `WincheDatabaseConfig.directoryResolver` — **required
 on native** platforms, ignored on the web (which uses IndexedDB):
 
