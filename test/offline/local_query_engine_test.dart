@@ -108,4 +108,46 @@ void main() {
     final r = LocalQueryEngine().runQuery(QuerySpec('users'), docs);
     expect(ids(r), ['a', 'b', 'c', 'd']);
   });
+
+  test('offset skips the first N after ordering', () {
+    final r = LocalQueryEngine().runQuery(
+        QuerySpec('users', orderBy: const [OrderSpec('age')], offset: 1), docs);
+    expect(ids(r), ['a', 'c']); // ascending age is [b, a, c]; skip b
+  });
+
+  test('offset composes with limit (skip then take)', () {
+    final r = LocalQueryEngine().runQuery(
+        QuerySpec('users',
+            orderBy: const [OrderSpec('age')], offset: 1, limit: 1),
+        docs);
+    expect(ids(r), ['a']);
+  });
+
+  test('offset beyond the result size yields empty', () {
+    final r = LocalQueryEngine().runQuery(
+        QuerySpec('users', orderBy: const [OrderSpec('age')], offset: 99), docs);
+    expect(ids(r), isEmpty);
+  });
+
+  test('limitToLast returns the last N in ascending order', () {
+    // ascending age is [b(20), a(30), c(40)] → last 2 = [a, c].
+    final r = LocalQueryEngine().runQuery(
+        QuerySpec('users', orderBy: const [OrderSpec('age')], limitToLast: 2),
+        docs);
+    expect(ids(r), ['a', 'c']);
+  });
+
+  test('limitToLast larger than the result returns everything', () {
+    final r = LocalQueryEngine().runQuery(
+        QuerySpec('users', orderBy: const [OrderSpec('age')], limitToLast: 99),
+        docs);
+    expect(ids(r), ['b', 'a', 'c']);
+  });
+
+  test('limitToLast without orderBy throws (matches server)', () {
+    expect(
+        () => LocalQueryEngine()
+            .runQuery(QuerySpec('users', limitToLast: 2), docs),
+        throwsArgumentError);
+  });
 }

@@ -35,7 +35,18 @@ EffectiveDoc applyOverlay(WireDocument? base, List<PendingWrite> pending) {
     fields ??= <String, Value>{};
     if (w is SetWrite) {
       path = w.path;
-      if (w.merge) {
+      if (w.mergeFields != null) {
+        // Masked merge: write only the masked paths; a masked path absent from
+        // the data (or carrying a delete sentinel) is removed. PROTOCOL §3.2.
+        for (final mask in w.mergeFields!) {
+          final v = resolvePath(w.fields, mask);
+          if (v == null || v is DeleteFieldValue) {
+            deletePath(fields, mask);
+          } else {
+            setPath(fields, mask, v);
+          }
+        }
+      } else if (w.merge) {
         for (final e in w.fields.entries) {
           fields[e.key] = _mergeValue(fields[e.key], e.value);
         }

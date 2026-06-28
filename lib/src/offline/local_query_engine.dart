@@ -19,6 +19,7 @@ class LocalQueryEngine {
   const LocalQueryEngine();
 
   List<WireDocument> runQuery(QuerySpec spec, Iterable<WireDocument> docs) {
+    spec.validate();
     final keys = _orderKeys(spec);
 
     // 1. where filter.
@@ -53,8 +54,20 @@ class LocalQueryEngine {
       ];
     }
 
-    // 5. Limit.
-    if (spec.limit != null && result.length > spec.limit!) {
+    // 5. Offset: skip the first N (after cursors, before limit). PROTOCOL §4.1.
+    if (spec.offset != null && spec.offset! > 0) {
+      result = spec.offset! >= result.length
+          ? <WireDocument>[]
+          : result.sublist(spec.offset!);
+    }
+
+    // 6. Limit / limitToLast. limitToLast takes the last N of the ascending
+    //    order (results are already sorted ascending) and keeps that order.
+    if (spec.limitToLast != null) {
+      if (result.length > spec.limitToLast!) {
+        result = result.sublist(result.length - spec.limitToLast!);
+      }
+    } else if (spec.limit != null && result.length > spec.limit!) {
       result = result.sublist(0, spec.limit!);
     }
     return result;

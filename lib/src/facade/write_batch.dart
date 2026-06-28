@@ -18,10 +18,11 @@ final class WriteBatch {
     DocumentReference<T> ref,
     T data, {
     bool merge = false,
+    List<String>? mergeFields,
     Precondition? precondition,
   }) {
     _writes.add(stageSet(ref.path, ref._converter.toMap(data),
-        merge: merge, precondition: precondition));
+        merge: merge, mergeFields: mergeFields, precondition: precondition));
   }
 
   /// Stages an update (patch) operation.

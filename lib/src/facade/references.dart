@@ -49,16 +49,20 @@ final class DocumentReference<T> {
     return _db._snapshotFrom(this, result);
   }
 
-  /// Replaces or deep-merges the document with [data].
+  /// Replaces or merges the document with [data].
   ///
   /// If [merge] is true, performs a deep-merge instead of a full replace.
+  /// If [mergeFields] is given, only those dotted paths are written (a masked
+  /// path absent from [data] is deleted); [merge] and [mergeFields] are
+  /// mutually exclusive.
   Future<WriteResult> set(
     T data, {
     bool merge = false,
+    List<String>? mergeFields,
     Precondition? precondition,
   }) async {
     final write = stageSet(path, _converter.toMap(data),
-        merge: merge, precondition: precondition);
+        merge: merge, mergeFields: mergeFields, precondition: precondition);
     final results = await _db.writes.applyWrites([write]);
     return WriteResult.fromJson(results[0], _db.doc);
   }
@@ -94,7 +98,8 @@ final class DocumentReference<T> {
   /// Backed by the dedicated `doc.listen` server subscription, with pending
   /// local writes overlaid for latency compensation. Emits a non-existent
   /// snapshot when the document is absent.
-  Stream<DocumentSnapshot<T>> snapshots() => _LiveDocument<T>(_db, this).stream();
+  Stream<DocumentSnapshot<T>> snapshots() =>
+      _DocumentListener<T>(_db, this).stream();
 
   @override
   String toString() => 'DocumentReference($path)';
@@ -299,6 +304,19 @@ final class QueryReference<T> {
     return _withSpec(_spec.copyWith(limit: n));
   }
 
+  /// Skips the first [n] matching documents. Composes with [limit]; cannot be
+  /// combined with [limitToLast].
+  QueryReference<T> offset(int n) {
+    return _withSpec(_spec.copyWith(offset: n));
+  }
+
+  /// Returns only the last [n] documents of the result window. Requires at
+  /// least one [orderBy] and cannot be combined with [limit] or [offset];
+  /// results stay in the orderBy ascending order.
+  QueryReference<T> limitToLast(int n) {
+    return _withSpec(_spec.copyWith(limitToLast: n));
+  }
+
   /// Restricts returned documents to [fields] (dotted paths). Document id,
   /// path, and metadata are always included.
   QueryReference<T> select(List<String> fields) =>
@@ -370,7 +388,7 @@ final class QueryReference<T> {
   /// When offline support is configured, emits cache-first and reacts to local
   /// writes; otherwise delegates directly to the server-only machine.
   Stream<QuerySnapshot<T>> snapshots() {
-    return _LiveQuery<T>(_db, _spec, _converter).stream();
+    return _QueryListener<T>(_db, _spec, _converter).stream();
   }
 
   /// Returns the number of documents matching this query.

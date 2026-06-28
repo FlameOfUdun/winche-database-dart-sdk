@@ -54,6 +54,34 @@ void main() {
       expect(body['merge'], equals(true));
     });
 
+    test('mergeFields serializes the field mask', () {
+      final write = SetWrite(
+        'users/u1',
+        {'name': StringValue('Alice'), 'age': IntegerValue(30)},
+        mergeFields: ['name', 'address.city'],
+      );
+      final body = write.toJson()['set'] as Map<String, Object?>;
+      expect(body['mergeFields'], equals(['name', 'address.city']));
+      expect(body['merge'], equals(false));
+    });
+
+    test('merge + mergeFields together throws', () {
+      final write = SetWrite('c/a', const {},
+          merge: true, mergeFields: const ['x']);
+      expect(write.toJson, throwsArgumentError);
+    });
+
+    test('empty mergeFields throws', () {
+      final write = SetWrite('c/a', const {}, mergeFields: const []);
+      expect(write.toJson, throwsArgumentError);
+    });
+
+    test('withPrecondition preserves mergeFields', () {
+      final s = SetWrite('c/a', const {}, mergeFields: const ['x']);
+      final s2 = s.withPrecondition(const Precondition(exists: true));
+      expect(s2.mergeFields, equals(['x']));
+    });
+
     test('with transforms', () {
       final write = SetWrite(
         'counters/c1',

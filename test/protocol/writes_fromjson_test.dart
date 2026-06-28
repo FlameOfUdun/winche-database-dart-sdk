@@ -17,6 +17,18 @@ void main() {
     expect(back.toJson(), w.toJson());
   });
 
+  test('SetWrite round-trips with mergeFields', () {
+    final w = SetWrite(
+      'users/u1',
+      {'name': const StringValue('Alice')},
+      mergeFields: const ['name', 'address.city'],
+    );
+    final back = Write.fromJson(w.toJson());
+    expect(back, isA<SetWrite>());
+    expect((back as SetWrite).mergeFields, equals(['name', 'address.city']));
+    expect(back.toJson(), w.toJson());
+  });
+
   test('UpdateWrite round-trips (dotted fields + deleteField)', () {
     final w = UpdateWrite('users/u1', {
       'a.b': const IntegerValue(1),

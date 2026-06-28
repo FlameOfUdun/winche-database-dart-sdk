@@ -374,10 +374,13 @@ void _handleSentinel(
 
 /// Builds a [SetWrite] from already-mapped [data].
 SetWrite stageSet(String path, Map<String, Object?> data,
-    {bool merge = false, Precondition? precondition}) {
+    {bool merge = false,
+    List<String>? mergeFields,
+    Precondition? precondition}) {
   final (fields, transforms) = splitWriteData(data);
   return SetWrite(path, fields,
       merge: merge,
+      mergeFields: mergeFields,
       transforms: transforms.isEmpty ? null : transforms,
       precondition: precondition);
 }

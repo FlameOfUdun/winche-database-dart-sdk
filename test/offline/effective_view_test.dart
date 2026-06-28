@@ -56,6 +56,41 @@ void main() {
     expect(eff.hasPendingWrites, isTrue);
   });
 
+  test('set with mergeFields writes only the masked paths, keeps the rest', () {
+    final base = wire('users/u1', {
+      'a': const IntegerValue(1),
+      'b': const IntegerValue(2),
+    });
+    final eff = applyOverlay(base, [
+      // Mask writes only `a`; `b` is untouched; `c` (in data, unmasked) ignored.
+      pw(
+          1,
+          SetWrite(
+              'users/u1',
+              {'a': const IntegerValue(9), 'c': const IntegerValue(3)},
+              mergeFields: const ['a'])),
+    ]);
+    expect(eff.document!.fields['a'], const IntegerValue(9));
+    expect(eff.document!.fields['b'], const IntegerValue(2));
+    expect(eff.document!.fields.containsKey('c'), isFalse);
+  });
+
+  test('set with mergeFields deletes a masked path absent from the data', () {
+    final base = wire('users/u1', {
+      'a': const IntegerValue(1),
+      'b': const IntegerValue(2),
+    });
+    final eff = applyOverlay(base, [
+      // `b` is masked but not present in the data → deleted.
+      pw(
+          1,
+          SetWrite('users/u1', {'a': const IntegerValue(1)},
+              mergeFields: const ['a', 'b'])),
+    ]);
+    expect(eff.document!.fields.containsKey('b'), isFalse);
+    expect(eff.document!.fields['a'], const IntegerValue(1));
+  });
+
   test('set with merge deep-merges into existing', () {
     final base = wire('users/u1', {
       'm': const MapValue({'x': IntegerValue(1)}),

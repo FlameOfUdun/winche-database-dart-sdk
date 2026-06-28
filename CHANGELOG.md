@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.1.0
+
+- Query parity with the server (PROTOCOL §4.1): added `QueryReference.offset(n)`
+  and `QueryReference.limitToLast(n)`. `offset` skips leading results and
+  composes with `limit`; `limitToLast` returns the last N of the result window
+  in ascending order, requires at least one `orderBy`, and cannot be combined
+  with `limit` or `offset` (validated locally, mirroring the server's
+  `INVALID_ARGUMENT`). Both are honoured for one-shot reads and live
+  `snapshots()` alike, since results are evaluated by the local query engine.
+- Write parity (PROTOCOL §3.2): `DocumentReference.set`, `WriteBatch.set`, and
+  `Transaction.set` now accept `mergeFields` — a dotted-path field mask. Only
+  the masked paths are written; a masked path absent from the data deletes it.
+  Mutually exclusive with `merge`. The pending-write overlay applies the same
+  mask semantics, so offline optimistic state matches the server.
+- Internal: the query and single-document live listeners now share a common
+  base, split by layer — `_LiveListener` (facade: snapshots + cache overlay) and
+  `_LiveFeed` (server-subscription lifecycle: reconnect/resume/teardown). The
+  concrete types are `_QueryListener`/`_DocumentListener` over
+  `_QueryFeed`/`_DocumentFeed`, in `live_listener.dart` and `live_feed.dart`. No
+  public API or behavior change.
+
 ## 4.0.0
 
 - **Breaking:** the durable persistence backend is now **sembast** instead of

@@ -200,14 +200,16 @@ class CursorSpec {
 
 /// Immutable query specification (PROTOCOL §4.1).
 ///
-/// Produces the wire JSON object sent as the `query` payload in WS frames
-/// and REST `:runQuery` requests.
+/// Produces the wire JSON object sent as the `query` payload in the `query`,
+/// `count`, `aggregate`, `listen`, and `tx.query` WebSocket frames.
 class QuerySpec {
   const QuerySpec(
     this.collection, {
     this.where,
     this.orderBy,
     this.limit,
+    this.offset,
+    this.limitToLast,
     this.select,
     this.start,
     this.end,
@@ -217,17 +219,46 @@ class QuerySpec {
   final FilterSpec? where;
   final List<OrderSpec>? orderBy;
   final int? limit;
+
+  /// Number of leading results to skip (PROTOCOL §4.1). Composes with [limit];
+  /// cannot be combined with [limitToLast].
+  final int? offset;
+
+  /// Returns only the last N of the result window (PROTOCOL §4.1). Requires at
+  /// least one [orderBy] and cannot be combined with [limit] or [offset];
+  /// results stay in the orderBy ascending order.
+  final int? limitToLast;
   final List<String>? select;
   final CursorSpec? start;
   final CursorSpec? end;
 
+  /// Enforces the limit/offset/limitToLast invariants (PROTOCOL §4.1),
+  /// throwing [ArgumentError] on violation — mirrors the server's
+  /// `INVALID_ARGUMENT`. Called before every send and local evaluation.
+  void validate() {
+    if (limitToLast != null) {
+      if (limit != null) {
+        throw ArgumentError('limit and limitToLast are mutually exclusive.');
+      }
+      if (offset != null) {
+        throw ArgumentError('offset cannot be combined with limitToLast.');
+      }
+      if (orderBy == null || orderBy!.isEmpty) {
+        throw ArgumentError('limitToLast requires at least one orderBy.');
+      }
+    }
+  }
+
   Map<String, Object?> toJson() {
+    validate();
     final map = <String, Object?>{'collection': collection};
     if (where != null) map['where'] = where!.toJson();
     if (orderBy != null) {
       map['orderBy'] = [for (final o in orderBy!) o.toJson()];
     }
     if (limit != null) map['limit'] = limit;
+    if (offset != null) map['offset'] = offset;
+    if (limitToLast != null) map['limitToLast'] = limitToLast;
     if (start != null) map['start'] = start!.toJson();
     if (end != null) map['end'] = end!.toJson();
     return map;
@@ -237,6 +268,8 @@ class QuerySpec {
     FilterSpec? where,
     List<OrderSpec>? orderBy,
     int? limit,
+    int? offset,
+    int? limitToLast,
     List<String>? select,
     CursorSpec? start,
     CursorSpec? end,
@@ -246,6 +279,8 @@ class QuerySpec {
         where: where ?? this.where,
         orderBy: orderBy ?? this.orderBy,
         limit: limit ?? this.limit,
+        offset: offset ?? this.offset,
+        limitToLast: limitToLast ?? this.limitToLast,
         select: select ?? this.select,
         start: start ?? this.start,
         end: end ?? this.end,

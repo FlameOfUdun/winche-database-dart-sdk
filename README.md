@@ -6,10 +6,11 @@ document store over a single WebSocket connection.
 - **Documents & collections** with a fluent reference API
 - **Typed values**: null, bool, int, double (incl. `NaN`/`Infinity`), string,
   bytes, timestamp, reference, geo-point, arrays, nested maps
-- **Writes**: set / merge-set / update / delete, with field transforms
-  (increment, server timestamp, array union/remove, min/max) and preconditions
-- **Queries**: filters, ordering, limits, cursors, client-side projection,
-  and `count`
+- **Writes**: set (replace, deep-merge, or field-mask via `mergeFields`) /
+  update / delete, with field transforms (increment, server timestamp, array
+  union/remove, min/max) and preconditions
+- **Queries**: filters, ordering, `limit` / `offset` / `limitToLast`, cursors,
+  client-side projection, `count`, and aggregations (sum / average)
 - **Real-time listeners** for documents and queries
 - **Optimistic transactions** with automatic retry
 - **Offline-first**: every read is served from a local cache + pending-write
@@ -89,6 +90,7 @@ if (snap.exists) {
 
 await alice.set({'name': 'Alice', 'age': 30});            // replace
 await alice.set({'age': 31}, merge: true);                // deep-merge
+await alice.set({'age': 31}, mergeFields: ['age']);       // write only masked paths
 await alice.update({'address.city': 'Oslo'});             // patch (dotted paths)
 await alice.delete();                                     // optionally cascade: true
 
@@ -171,11 +173,30 @@ Filter operators (named args on `where`): `isEqualTo`, `isNotEqualTo`,
 `arrayContains`, `arrayContainsAny`, `arrayContainsAll`, `whereIn`, `whereNotIn`,
 `contains`, `startsWith`, `endsWith`, `matchesRegex`, `isNull`, `isNan`, `exists`.
 
-Cursors operate on the `orderBy` keys: `startAt`, `startAfter`, `endAt`,
-`endBefore`. Counting:
+`limit(n)` caps the result; `offset(n)` skips leading results; `limitToLast(n)`
+returns the last N of an ordered query (requires an `orderBy`, and excludes
+`limit`/`offset`). Cursors operate on the `orderBy` keys: `startAt`, `startAfter`,
+`endAt`, `endBefore`.
 
 ```dart
-final n = await db.collection('users').where('active', isEqualTo: true).count();
+final page = await db.collection('users').orderBy('name').offset(40).limit(20).get();
+final tail = await db.collection('users').orderBy('score').limitToLast(3).get();
+```
+
+### Counting & aggregations
+
+`count` and aggregations run **server-side** over a query (online-only; they honor
+`where`/`orderBy`/`limit` but reject cursors):
+
+```dart
+final n       = await db.collection('users').where('active', isEqualTo: true).count();
+final revenue = await db.collection('orders').where('paid', isEqualTo: true).sum('amount');
+final rating  = await db.collection('reviews').average('stars');
+
+final agg = await db.collection('orders').aggregate([
+  Aggregate.count(alias: 'n'),
+  Aggregate.sum('amount', alias: 'revenue'),
+]); // → {'n': 12, 'revenue': 840}
 ```
 
 ### Field projection (`select`)

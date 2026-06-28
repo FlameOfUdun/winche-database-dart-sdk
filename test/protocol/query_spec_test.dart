@@ -38,6 +38,62 @@ void main() {
       final end = j['end'] as Map<String, Object?>;
       expect(end['before'], equals(false));
     });
+
+    test('offset serializes; absent when null', () {
+      expect(QuerySpec('users', offset: 50).toJson()['offset'], equals(50));
+      expect(QuerySpec('users').toJson().containsKey('offset'), isFalse);
+    });
+
+    test('limitToLast serializes; absent when null', () {
+      final j = QuerySpec('users',
+          orderBy: const [OrderSpec('age')], limitToLast: 10).toJson();
+      expect(j['limitToLast'], equals(10));
+      expect(QuerySpec('users').toJson().containsKey('limitToLast'), isFalse);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // limit / offset / limitToLast invariants — PROTOCOL §4.1
+  // ---------------------------------------------------------------------------
+  group('QuerySpec.validate', () {
+    test('limit + limitToLast is rejected', () {
+      expect(
+          () => QuerySpec('users',
+              orderBy: const [OrderSpec('age')],
+              limit: 5,
+              limitToLast: 5).toJson(),
+          throwsArgumentError);
+    });
+
+    test('offset + limitToLast is rejected', () {
+      expect(
+          () => QuerySpec('users',
+              orderBy: const [OrderSpec('age')],
+              offset: 1,
+              limitToLast: 5).toJson(),
+          throwsArgumentError);
+    });
+
+    test('limitToLast without orderBy is rejected', () {
+      expect(() => QuerySpec('users', limitToLast: 5).toJson(),
+          throwsArgumentError);
+    });
+
+    test('limitToLast with orderBy is accepted', () {
+      expect(
+          QuerySpec('users', orderBy: const [OrderSpec('age')], limitToLast: 5)
+              .toJson()['limitToLast'],
+          equals(5));
+    });
+
+    test('copyWith preserves offset and limitToLast', () {
+      final base = QuerySpec('users',
+          orderBy: const [OrderSpec('age')], offset: 3);
+      expect(base.copyWith(limit: 2).offset, equals(3));
+      final ltl = QuerySpec('users',
+          orderBy: const [OrderSpec('age')], limitToLast: 4);
+      expect(ltl.copyWith(where: null).limitToLast, equals(4));
+    });
   });
 
   // ---------------------------------------------------------------------------

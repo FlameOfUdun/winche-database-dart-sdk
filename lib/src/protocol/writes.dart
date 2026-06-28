@@ -29,6 +29,7 @@ sealed class Write {
         body['path'] as String,
         _parseFields(body['fields'] as Map<String, Object?>? ?? const {}),
         merge: body['merge'] as bool? ?? false,
+        mergeFields: (body['mergeFields'] as List<Object?>?)?.cast<String>(),
         transforms: _parseTransforms(body['transforms']),
         precondition: Precondition.fromJson(
             body['precondition'] as Map<String, Object?>?),
@@ -187,7 +188,7 @@ final class FieldTransform {
   }
 }
 
-/// Replaces or deep-merges a document.
+/// Replaces, deep-merges, or masked-merges a document.
 ///
 /// Wire: `{"set": {"path": "...", "fields": {...}, "merge": false, ...}}`
 ///
@@ -197,6 +198,7 @@ final class SetWrite extends Write {
     this.path,
     this.fields, {
     this.merge = false,
+    this.mergeFields,
     this.transforms,
     this.precondition,
   });
@@ -204,18 +206,33 @@ final class SetWrite extends Write {
   @override
   final String path;
   final Map<String, Value> fields;
+
+  /// Deep-merges [fields] onto the existing document instead of replacing it.
+  /// Mutually exclusive with [mergeFields].
   final bool merge;
+
+  /// Field-mask merge (PROTOCOL §3.2): only these dotted paths are written; a
+  /// masked path absent from [fields] (or carrying a delete sentinel) deletes
+  /// that path. Mutually exclusive with [merge].
+  final List<String>? mergeFields;
   final List<FieldTransform>? transforms;
   @override
   final Precondition? precondition;
 
   @override
   Map<String, Object?> toJson() {
+    if (merge && mergeFields != null) {
+      throw ArgumentError('merge and mergeFields are mutually exclusive.');
+    }
+    if (mergeFields != null && mergeFields!.isEmpty) {
+      throw ArgumentError('mergeFields must not be empty.');
+    }
     final body = <String, Object?>{
       'path': path,
       'fields': {for (final e in fields.entries) e.key: e.value.toJson()},
       'merge': merge,
     };
+    if (mergeFields != null) body['mergeFields'] = mergeFields;
     if (transforms != null) {
       body['transforms'] = [for (final t in transforms!) t.toJson()];
     }
@@ -227,7 +244,10 @@ final class SetWrite extends Write {
 
   @override
   SetWrite withPrecondition(Precondition? pc) => SetWrite(path, fields,
-      merge: merge, transforms: transforms, precondition: pc);
+      merge: merge,
+      mergeFields: mergeFields,
+      transforms: transforms,
+      precondition: pc);
 }
 
 /// Patches individual nested fields (via dotted field paths).

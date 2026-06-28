@@ -127,7 +127,7 @@ void main() {
 
     final liveEventCount = events.length;
 
-    // Drop the socket — this triggers _goDown → _LiveDocument._onServerDocs(null)
+    // Drop the socket — this triggers _goDown → _DocumentListener._onServerDocs(null)
     // → _serverActive = false → _emit() → fromCache = true.
     await h.channels[0].serverClose();
     await pump(12);
