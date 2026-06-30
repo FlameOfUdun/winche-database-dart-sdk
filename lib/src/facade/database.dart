@@ -42,6 +42,18 @@ final class WincheDatabaseConfig {
   /// Write-conflict resolution policy. Defaults to [ConflictPolicy.manual].
   final ConflictPolicy conflictPolicy;
 
+  /// Maximum number of live documents kept in the local cache. When exceeded,
+  /// the least-recently-used documents not referenced by an active listener or a
+  /// pending write are evicted (re-fetched on next read). Null (default) disables
+  /// eviction. Composes with [cacheSizeBytes] (either cap triggers eviction).
+  final int? maxCachedDocuments;
+
+  /// Maximum approximate size in bytes of the local document cache. When
+  /// exceeded, least-recently-used unpinned documents are evicted. Null (default)
+  /// disables the byte cap. Composes with [maxCachedDocuments] (either cap
+  /// triggers eviction).
+  final int? cacheSizeBytes;
+
   const WincheDatabaseConfig({
     required this.uri,
     this.tokenProvider,
@@ -52,12 +64,17 @@ final class WincheDatabaseConfig {
     this.inMemory = false,
     this.directoryResolver,
     this.conflictPolicy = ConflictPolicy.manual,
+    this.maxCachedDocuments,
+    this.cacheSizeBytes,
   });
 }
 
 /// The entry point for the Winche Database Dart SDK.
 ///
 /// Connects lazily on the first operation.
+///
+/// NOTE: a persistent (sembast) database must be owned by a single isolate. Do
+/// not open the same on-disk database from multiple isolates concurrently.
 final class WincheDatabase {
   /// Creates a database client from a [WincheDatabaseConfig]. Offline support is
   /// always on: reads and live listeners are served from a local cache +
@@ -94,6 +111,8 @@ final class WincheDatabase {
       ),
       store,
       config.conflictPolicy,
+      maxCachedDocuments: config.maxCachedDocuments,
+      cacheSizeBytes: config.cacheSizeBytes,
     );
   }
 
@@ -102,22 +121,43 @@ final class WincheDatabase {
     ConnectionConfig config,
     LocalStore store, {
     ConflictPolicy conflictPolicy = ConflictPolicy.manual,
+    int? maxCachedDocuments,
+    int? cacheSizeBytes,
   }) =>
-      WincheDatabase._(config, store, conflictPolicy);
+      WincheDatabase._(config, store, conflictPolicy,
+          maxCachedDocuments: maxCachedDocuments,
+          cacheSizeBytes: cacheSizeBytes);
 
   WincheDatabase._(
     ConnectionConfig config,
     LocalStore store,
-    ConflictPolicy conflictPolicy,
-  )   : _transport = WsTransport(config),
+    ConflictPolicy conflictPolicy, {
+    int? maxCachedDocuments,
+    int? cacheSizeBytes,
+  })  : _transport = WsTransport(config),
         _store = store {
-    _cache = DocumentCache(_store);
+    _activeTargets = ActiveTargets();
+    final eviction = (maxCachedDocuments == null && cacheSizeBytes == null)
+        ? null
+        : EvictionManager(
+            maxDocuments: maxCachedDocuments, maxBytes: cacheSizeBytes);
+    _cache = DocumentCache(_store, eviction: eviction);
     _queue = WriteQueue(_store);
+    _targets = TargetCache(_store);
+    _resumeTokens = ResumeTokenStore(_store);
+    if (eviction != null) {
+      eviction
+        ..pinnedPaths = (() async => {
+              ..._activeTargets.all(),
+              for (final p in await _queue.all()) p.path,
+            }) // parens required: otherwise the cascade binds to the Set literal
+        ..removeDocument = _store.removeDocument;
+    }
     _changes = LocalChangeNotifier();
     _sync = SyncController(_transport, _cache, _queue,
         conflictPolicy: conflictPolicy, changeNotifier: _changes)
       ..start();
-    _reads = CachingReadCoordinator(_transport, _cache, _queue);
+    _reads = CachingReadCoordinator(_transport, _cache, _queue, targets: _targets);
     _writes = QueueingWriteCoordinator(_cache, _queue,
         maxFrameBytes: config.maxFrameBytes, onEnqueued: () async {
       _changes.notify();
@@ -132,10 +172,22 @@ final class WincheDatabase {
   late final WriteQueue _queue;
   late final SyncController _sync;
   late final DocumentCache _cache;
+  late final TargetCache _targets;
+  late final ResumeTokenStore _resumeTokens;
+  late final ActiveTargets _activeTargets;
   late final LocalChangeNotifier _changes;
 
   /// Internal: the document cache (used by the facade live listeners).
   DocumentCache get cache => _cache;
+
+  /// Internal: the per-query membership cache (used by listeners + read coordinator).
+  TargetCache get targets => _targets;
+
+  /// Internal: durable per-subscription resume tokens (used by live feeds).
+  ResumeTokenStore get resumeTokens => _resumeTokens;
+
+  /// Internal: the active-subscription reference registry (pins docs against eviction).
+  ActiveTargets get activeTargets => _activeTargets;
 
   /// Internal: the write queue.
   WriteQueue get queue => _queue;

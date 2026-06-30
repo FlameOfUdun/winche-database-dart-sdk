@@ -56,6 +56,10 @@ class FakeLocalStore implements LocalStore {
   }
 
   @override
+  Future<List<Map<String, Object?>>> allDocuments() async =>
+      [for (final v in _docs.values) Map.of(v)];
+
+  @override
   Future<int> nextPendingSeq() async => ++_seq;
 
   @override

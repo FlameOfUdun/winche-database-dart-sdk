@@ -23,7 +23,11 @@ Future<void> pump([int times = 6]) async {
 /// then routes each subsequent client request frame to [handler] (or, if unset,
 /// replies with [defaultResult]).
 class FacadeHarness {
-  FacadeHarness({bool autoReconnect = false, LocalStore? store})
+  FacadeHarness(
+      {bool autoReconnect = false,
+      LocalStore? store,
+      int? maxCachedDocuments,
+      int? cacheSizeBytes})
       : channel = FakeChannel()..startCapture() {
     db = WincheDatabase.withStore(
       ConnectionConfig(
@@ -41,6 +45,8 @@ class FacadeHarness {
         autoReconnect: autoReconnect,
       ),
       store ?? MemoryLocalStore(), // null → default in-memory store (offline is always on)
+      maxCachedDocuments: maxCachedDocuments,
+      cacheSizeBytes: cacheSizeBytes,
     );
     channel.onClientFrame = _route;
   }

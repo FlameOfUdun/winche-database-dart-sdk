@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.2.0
+
+- Deletion reconciliation: server-side deletes are now tombstoned locally, so a
+  deleted document disappears from every listener, `get`, and cache read and
+  never resurfaces — online or offline. Adds the `deleted` listen-delta change
+  kind and bumps the wire protocol to **v2**; `listen`/`doc.listen` frames now
+  advertise `protocol: 2`, and the server only emits `deleted` to clients on v2.
+- Membership-based offline reads: each live query records the exact ordered set
+  of documents the server last reported for it (`TargetCache`). Offline reads and
+  a listener's cache-first emission serve that set against the cache + pending
+  overlay, so `limit` / `offset` / filter queries stay correct offline instead of
+  re-deriving over the whole collection (which could resurface out-of-window or
+  stale-but-locally-matching documents).
+- Resume across restarts: with durable persistence, listeners persist their
+  resume token (`ResumeTokenStore`) and query membership. On relaunch a listener
+  emits its last-known results immediately and resumes the server subscription
+  with the stored token — going live without re-downloading when nothing changed,
+  or taking a fresh snapshot when the token is stale. New `listen.current` server
+  frame signals a covered resume (live and up to date, no documents). With
+  `inMemory: true`, resume state lasts only for the session.
+- Optional bounded cache: new `WincheDatabaseConfig.maxCachedDocuments` and
+  `cacheSizeBytes` caps (both default null = unbounded). When a cap is exceeded
+  the least-recently-used documents not referenced by an active listener or a
+  pending write are evicted; an evicted document is re-fetched on next read
+  (eviction is not deletion). Caps are also enforced against already-persisted
+  documents on startup. See the README's "Cache management" section.
+- Conflict handling: under the automatic policies (`clientWins`/`serverWins`), a
+  write that can never be resolved — e.g. an `update` to a since-deleted document
+  that always fails with `NOT_FOUND` — is now reported as `WriteFailed` and
+  removed from the queue instead of being retried forever.
+
 ## 4.1.0
 
 - Query parity with the server (PROTOCOL §4.1): added `QueryReference.offset(n)`

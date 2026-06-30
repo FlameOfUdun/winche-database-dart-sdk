@@ -331,4 +331,31 @@ void main() {
     await c.discard();
     expect(() => c.overwrite(), throwsStateError);
   });
+
+  test('clientWins drops an unresolvable conflict instead of livelocking',
+      () async {
+    var writeCalls = 0;
+    transport.responder = (f) {
+      if (f['type'] == 'write') {
+        writeCalls++;
+        // An UPDATE to a now-missing doc always NOT_FOUNDs; overwrite can't fix it.
+        throw const NotFoundException('missing');
+      }
+      return {'document': null}; // server doc fetch → absent
+    };
+    await queue.enqueue(UpdateWrite('users/u1', {'n': const IntegerValue(2)}),
+        localCommitTime: DateTime.utc(2026));
+
+    final sync = controller(policy: ConflictPolicy.clientWins);
+    final events = <SyncEvent>[];
+    sync.events.listen(events.add);
+
+    // Must terminate (no livelock) — bounded by the timeout.
+    await sync.drain().timeout(const Duration(seconds: 5));
+
+    expect(await queue.hasPending(), isFalse,
+        reason: 'an unresolvable write must be dropped, not retried forever');
+    expect(events.whereType<WriteFailed>().length, 1);
+    expect(writeCalls, lessThanOrEqualTo(3)); // bounded retries
+  });
 }

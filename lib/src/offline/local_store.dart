@@ -15,6 +15,10 @@ abstract interface class LocalStore {
   Future<List<Map<String, Object?>>> documentsInCollection(
       String collectionPath);
 
+  /// Every stored document record (live and tombstone), across all collections.
+  /// Used to prime the eviction cache from persisted state at startup.
+  Future<List<Map<String, Object?>>> allDocuments();
+
   // --- Pending write queue (keyed by monotonic seq) ---
   /// Returns a new, strictly increasing sequence number (persisted).
   Future<int> nextPendingSeq();

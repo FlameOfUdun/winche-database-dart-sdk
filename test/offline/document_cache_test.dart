@@ -1,8 +1,20 @@
 import 'package:test/test.dart';
 import 'package:winche_database/src/offline/document_cache.dart';
+import 'package:winche_database/src/offline/eviction_manager.dart';
+import 'package:winche_database/src/offline/memory_local_store.dart';
 import 'package:winche_database/src/protocol/messages.dart';
 import 'package:winche_database/src/core/values.dart';
 import 'fake_local_store.dart';
+
+WireDocument _doc(String path) => WireDocument(
+      path: path,
+      id: path.split('/').last,
+      collection: path.split('/').first,
+      fields: const {},
+      createTime: '2026-06-30T10:00:00+00:00',
+      updateTime: '2026-06-30T10:00:00+00:00',
+      version: 1,
+    );
 
 WireDocument wire(String path, Map<String, Object?> fields,
         {String updateTime = '2026-06-08T10:00:00+00:00', int version = 1}) =>
@@ -45,5 +57,43 @@ void main() {
     await cache.putConfirmedDeleted('users/u3', '2026-06-08T11:00:00+00:00');
     final docs = await cache.confirmedInCollection('users');
     expect(docs.map((d) => d.path).toSet(), {'users/u1', 'users/u2'});
+  });
+
+  test('evicts the oldest unpinned live doc once the cap is exceeded', () async {
+    final store = MemoryLocalStore();
+    final eviction = EvictionManager(maxDocuments: 2)
+      ..pinnedPaths = (() async => const <String>{}) // parens: keep the cascade on the manager, not the Set
+      ..removeDocument = store.removeDocument;
+    final cache = DocumentCache(store, eviction: eviction);
+
+    await cache.putConfirmed(_doc('c/a'));
+    await cache.putConfirmed(_doc('c/b'));
+    await cache.putConfirmed(_doc('c/c')); // exceeds cap → evict oldest ('c/a')
+
+    expect(await cache.confirmed('c/a'), isNull, reason: 'c/a should be evicted');
+    expect(await cache.confirmed('c/b'), isNotNull);
+    expect(await cache.confirmed('c/c'), isNotNull);
+  });
+
+  test('putConfirmed primes before writing, so the written doc is not evicted',
+      () async {
+    final store = MemoryLocalStore();
+    // Pre-persist 3 docs (no eviction) as a prior session would have.
+    final seed = DocumentCache(store);
+    for (final id in ['a', 'b', 'c']) {
+      await seed.putConfirmed(_doc('c/$id'));
+    }
+
+    final eviction = EvictionManager(maxDocuments: 2)
+      ..pinnedPaths = (() async => const <String>{})
+      ..removeDocument = store.removeDocument;
+    final cache = DocumentCache(store, eviction: eviction);
+
+    // Re-confirm an EXISTING doc; startup priming runs first, so the just-written
+    // doc must survive (I1 regression: prime-before-put).
+    await cache.putConfirmed(_doc('c/a'));
+
+    expect(await cache.confirmed('c/a'), isNotNull,
+        reason: 'the just-written doc must survive startup priming eviction');
   });
 }

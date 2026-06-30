@@ -369,6 +369,9 @@ class ProtocolConnection {
       case ListenDeltaFrame(:final subscriptionId):
         _listeners[subscriptionId]?.add(frame);
 
+      case ListenCurrentFrame(:final subscriptionId):
+        _listeners[subscriptionId]?.add(frame);
+
       case UnknownFrame():
         // Log-and-ignore: future server capabilities.
         break;

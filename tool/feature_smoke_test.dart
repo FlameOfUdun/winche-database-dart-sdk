@@ -421,6 +421,26 @@ Future<void> main(List<String> args) async {
         'live query never observed the insert (sizes: $sizes)');
   });
 
+  await check(
+      'deletion reconciliation: server delete removes local copy, no cache resurrection',
+      () async {
+    final ref = col.doc('del_x');
+    created.add(ref);
+    await outcomeOf(ref.path, () => ref.set({'n': 1}));
+    final seen = <bool>[];
+    final sub = ref.snapshots().listen((s) => seen.add(s.exists));
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    await outcomeOf(ref.path, () => ref.delete());
+    await _await(() => seen.isNotEmpty && seen.last == false ? 'ok' : null,
+        timeout: const Duration(seconds: 4));
+    await sub.cancel();
+    expect(seen.isNotEmpty && seen.last == false,
+        'listener did not observe the deletion; saw $seen');
+    final cached = await ref.get(const GetOptions(source: Source.cache));
+    expect(!cached.exists,
+        'deleted doc reappeared from cache — tombstone missing');
+  });
+
   // =====================================================================
   print('\n[ Transactions ]');
   // =====================================================================

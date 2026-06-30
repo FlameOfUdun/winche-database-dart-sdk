@@ -1,4 +1,5 @@
 import 'package:test/test.dart';
+import 'package:winche_database/src/offline/memory_local_store.dart';
 import 'fake_local_store.dart';
 
 void main() {
@@ -49,5 +50,16 @@ void main() {
     expect(await reopened.getDocument('a/b'), {'path': 'a/b'});
     expect((await reopened.allPending()).single['seq'], seq);
     expect(await reopened.nextPendingSeq(), greaterThan(seq));
+  });
+
+  test('allDocuments returns every stored document record', () async {
+    final store = MemoryLocalStore();
+    await store.putDocument('c/a', {'path': 'c/a', 'n': 1});
+    await store.putDocument('c/b', {'path': 'c/b', 'n': 2});
+    await store.putDocument('d/x', {'path': 'd/x', 'n': 3});
+
+    final all = await store.allDocuments();
+    expect(all.length, 3);
+    expect({for (final r in all) r['path']}, {'c/a', 'c/b', 'd/x'});
   });
 }

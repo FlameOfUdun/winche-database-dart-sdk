@@ -15,6 +15,14 @@ document store over a single WebSocket connection.
 - **Optimistic transactions** with automatic retry
 - **Offline-first**: every read is served from a local cache + pending-write
   overlay; every write is queued locally and synced in the background
+- **Consistent offline reads**: server-side deletions are reconciled (a deleted
+  document never reappears from cache), and `limit` / `offset` / filter queries
+  serve their true last-known result set offline — not a re-derivation over the
+  whole collection
+- **Cross-restart resume & bounded cache**: listeners persist resume tokens and
+  query membership (instant cached results on relaunch, efficient resume with no
+  full re-download when nothing changed); the cache can optionally be capped by
+  document count or byte size — see [Cache management](#cache-management)
 - **Durable persistence** (sembast, on by default) or in-memory
 
 For the authoritative wire-protocol specification, see the server repository's
@@ -69,7 +77,9 @@ All options live on `WincheDatabaseConfig`: `uri`, `tokenProvider`, `pingInterva
 (default 30 s), `autoReconnect` (default true), `maxBackoff` (default 30 s),
 `maxFrameBytes` (default 1 MiB — see [Writes](#writes-offline-first)), `inMemory`
 (default false), `directoryResolver` (sembast directory; see
-[Persistence](#persistence)), and `conflictPolicy` (default `manual`).
+[Persistence](#persistence)), `conflictPolicy` (default `manual`), and the
+optional local-cache caps `maxCachedDocuments` and `cacheSizeBytes` (both default
+null = unbounded — see [Cache management](#cache-management)).
 
 ---
 
@@ -247,7 +257,9 @@ flowchart TD
 
 A permanently-failing subscription (`PERMISSION_DENIED` / `UNAUTHENTICATED` /
 invalid query) surfaces the error on the stream and stops retrying; transient
-drops reconnect silently.
+drops reconnect silently. Server-side deletions are reconciled into the local
+cache (a deleted document never reappears), and with durable persistence a
+listener resumes across app restarts — see [Cache management](#cache-management).
 
 ---
 
@@ -290,8 +302,12 @@ await db.clearPersistence();       // wipe local cache + queue
 ```
 
 Conflict handling is governed by `WincheDatabaseConfig.conflictPolicy`:
-`manual` (default — pause and surface a `WriteConflict`), `clientWins`, or
-`serverWins`.
+`manual` (default — pause and surface a `WriteConflict` for explicit
+resolution), `clientWins` (replay the local write, last-write-wins), or
+`serverWins` (drop the local write, keep the server's). Under the automatic
+policies a conflict that can never be resolved — e.g. an `update` to a document
+that has since been deleted, which always fails with `NOT_FOUND` — is reported
+as a `WriteFailed` and removed from the queue rather than retried forever.
 
 > **Frame guard:** a batch over 500 writes, or whose serialized frame exceeds
 > `maxFrameBytes` (default 1 MiB), is rejected with `InvalidArgumentException`
@@ -378,6 +394,48 @@ final db = WincheDatabase(WincheDatabaseConfig(uri: uri, inMemory: true));
 
 Advanced / testing: inject a custom `LocalStore` (using the lower-level
 `ConnectionConfig`) with `WincheDatabase.withStore(connectionConfig, store)`.
+
+---
+
+## Cache management
+
+The local cache stays consistent with the server and can be bounded.
+
+**Deletion reconciliation.** When a document is deleted on the server, the SDK
+tombstones it locally, so it disappears from every listener, `get`, and cache
+read and never resurfaces — online or offline.
+
+**Membership-based offline reads.** Each live query remembers the exact set of
+documents the server last reported for it. Offline reads and a listener's
+cache-first emission serve that set (resolved against the cache + pending
+overlay), so `limit` / `offset` / filter queries stay correct offline instead of
+re-deriving over the whole collection.
+
+**Resume across restarts.** With durable persistence (the default), listeners
+persist their resume token and query membership. On relaunch a listener emits its
+last-known results immediately and resumes the server subscription with the
+stored token: if nothing changed it goes live without re-downloading; if the
+token is stale the server sends a fresh snapshot. (With `inMemory: true`, resume
+state lasts only for the session.)
+
+**Bounded cache (optional, off by default).** Set `maxCachedDocuments` and/or
+`cacheSizeBytes` to cap the cache. When a cap is exceeded, the least-recently-used
+documents that are **not** referenced by an active listener or a pending write are
+evicted. Eviction is not a deletion — an evicted document is simply re-fetched on
+its next read (deleted documents stay tombstoned). A configured cap is also
+enforced against already-persisted documents on startup.
+
+```dart
+final db = WincheDatabase(WincheDatabaseConfig(
+  uri: uri,
+  directoryResolver: () async => appDir,
+  cacheSizeBytes: 50 * 1024 * 1024,   // ~50 MiB cap (or maxCachedDocuments: 10000)
+));
+```
+
+> A document deleted while the app is fully offline reconciles on the next
+> reconnect or read, not instantly. On native/desktop a persistent store must be
+> owned by a single isolate.
 
 ---
 

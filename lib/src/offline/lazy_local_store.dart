@@ -33,6 +33,10 @@ class LazyLocalStore implements LocalStore {
       (await _ensure()).documentsInCollection(collectionPath);
 
   @override
+  Future<List<Map<String, Object?>>> allDocuments() async =>
+      (await _ensure()).allDocuments();
+
+  @override
   Future<int> nextPendingSeq() async => (await _ensure()).nextPendingSeq();
 
   @override

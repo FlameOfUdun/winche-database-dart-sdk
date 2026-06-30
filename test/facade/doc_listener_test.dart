@@ -86,4 +86,44 @@ void main() {
 
     await sub.cancel();
   });
+
+  test('a removed delta tombstones the doc so a later cache read stays missing',
+      () async {
+    h.handler = (f) {
+      if (f['type'] == 'doc.listen') h.respond(f, {'subscriptionId': 's'});
+    };
+    final sub = h.db.doc('users/u1').snapshots().listen((_) {});
+    await pump();
+
+    h.push({
+      'type': 'listen.snapshot',
+      'subscriptionId': 's',
+      'documents': [wireDoc('users/u1', wireFields({'name': 'Alice'}))],
+      'readTime': '2026-06-30T10:00:00+00:00',
+    });
+    await pump();
+
+    h.push({
+      'type': 'listen.delta',
+      'subscriptionId': 's',
+      'changes': [
+        {
+          'kind': 'deleted',
+          'document': wireDoc('users/u1', wireFields({'name': 'Alice'})),
+          'oldIndex': 0,
+          'newIndex': -1,
+        }
+      ],
+      'count': 0,
+      'readTime': '2026-06-30T10:00:01+00:00',
+    });
+    await pump();
+
+    await sub.cancel();
+
+    // The confirmed cache must now hold a tombstone, not the stale doc.
+    final cached = await h.db.cache.confirmed('users/u1');
+    expect(cached, isNull, reason: 'deleted doc must be tombstoned in the cache');
+    expect(await h.db.cache.isKnownAbsent('users/u1'), isTrue);
+  });
 }

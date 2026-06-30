@@ -14,6 +14,10 @@ import 'records.dart';
 import 'sync_event.dart';
 import 'write_queue.dart';
 
+/// Result of draining one unit: a clean ack (drop it from the in-memory view),
+/// any other queue mutation (re-read fresh), or the server was offline (stop).
+enum _DrainOutcome { acked, mutated, offline }
+
 /// Drains the offline [WriteQueue] to the server, advancing the confirmed cache
 /// on ack and reporting progress on [events].
 class SyncController {
@@ -34,6 +38,13 @@ class SyncController {
 
   /// Keys (batchId for batches, else path) of units awaiting conflict resolution.
   final Set<String> _pausedKeys = {};
+
+  /// Per-unit (keyed by head seq) count of automatic conflict resolutions, used to
+  /// drop a unit whose auto-resolution can't make progress instead of livelocking
+  /// the drain (e.g. a clientWins overwrite of an UPDATE to a missing doc keeps
+  /// returning NOT_FOUND).
+  final Map<int, int> _autoResolveAttempts = {};
+  static const _maxAutoResolveAttempts = 1;
 
   final List<Completer<void>> _pendingWaiters = [];
 
@@ -58,11 +69,33 @@ class SyncController {
 
   /// Drains the whole queue (best-effort). No-op when already draining; when the
   /// server is unreachable the unit stays queued and is retried on reconnect.
+  ///
+  /// Reads the queue once and maintains it in memory: a clean ack drops the unit
+  /// from the in-memory view (no re-read → linear). A conflict/error path mutates
+  /// the queue unpredictably, so the view is re-read fresh — preserving exact
+  /// conflict behavior.
   Future<void> drain() async {
     if (_draining) return;
     _draining = true;
     try {
-      while (await _drainHeadUnit()) {}
+      var queue = await _queue.all();
+      while (true) {
+        var unit = _firstUnpausedUnit(queue);
+        if (unit == null) {
+          // In-memory view exhausted of actionable units. Re-read once to pick up
+          // writes enqueued while we were draining (their notifyEnqueued no-ops
+          // under the _draining guard, so they aren't in our snapshot). Still
+          // nothing actionable → done.
+          queue = await _queue.all();
+          unit = _firstUnpausedUnit(queue);
+          if (unit == null) break;
+        }
+        final r = await _drainUnit(unit);
+        if (r.outcome == _DrainOutcome.offline) break;
+        queue = r.outcome == _DrainOutcome.acked
+            ? await _rebaseSiblings(_withoutUnit(queue, unit), r.rebases)
+            : await _queue.all();
+      }
     } finally {
       _draining = false;
     }
@@ -70,52 +103,89 @@ class SyncController {
   }
 
   /// Replays the head unit of the queue once. No-op (returns false) when already
-  /// draining, offline, or empty. Returns true if a unit was acked and removed.
+  /// draining, offline, or empty. Returns true if a unit was acked or its error
+  /// was handled (conflict paused/overwritten/dropped).
   Future<bool> drainOnce() async {
     if (_draining) return false;
     _draining = true;
     try {
-      return await _drainHeadUnit();
+      final all = await _queue.all();
+      final unit = _firstUnpausedUnit(all);
+      if (unit == null) return false;
+      final r = await _drainUnit(unit);
+      if (r.outcome == _DrainOutcome.acked) {
+        await _rebaseSiblings(_withoutUnit(all, unit), r.rebases);
+      }
+      return r.outcome != _DrainOutcome.offline;
     } finally {
       _draining = false;
     }
   }
 
-  /// The unguarded core: replays the head unit. Callers must hold `_draining`.
-  Future<bool> _drainHeadUnit() async {
-    final all = await _queue.all();
-    if (all.isEmpty) return false;
-
-    final unit = _firstUnpausedUnit(all);
-    if (unit == null) return false;
+  /// Replays one unit. Callers must hold `_draining`. Returns the outcome plus,
+  /// when acked, a path → server-updateTime map so the caller can rebase queued
+  /// siblings from its in-memory view (no store re-scan).
+  Future<({_DrainOutcome outcome, Map<String, String> rebases})> _drainUnit(
+      List<PendingWrite> unit) async {
     final key = _keyOf(unit);
-
     final frame =
         writeFrame('', [for (final p in unit) _withReplayPrecondition(p)]);
     final Map<String, Object?> result;
     try {
       result = await _transport.request(frame);
     } on UnavailableException {
-      return false; // offline — keep the queue
+      return (outcome: _DrainOutcome.offline, rebases: const <String, String>{});
     } on WincheException catch (e) {
       await _handleError(unit, key, e);
-      return true; // handled (paused or dropped); keep draining other units
+      return (outcome: _DrainOutcome.mutated, rebases: const <String, String>{});
     }
 
     final writeResults = result['writeResults'] as List<Object?>? ?? const [];
+    final rebases = <String, String>{};
     for (var i = 0; i < unit.length; i++) {
       final wr = (i < writeResults.length
           ? writeResults[i]
           : const <String, Object?>{}) as Map<String, Object?>;
-      await _applyAck(unit[i], wr);
+      rebases[unit[i].path] = await _applyAck(unit[i], wr);
       await _queue.remove(unit[i].seq);
     }
+    _autoResolveAttempts.remove(unit.first.seq);
     _emit(WriteSynced(
       paths: [for (final p in unit) p.path],
       batchId: unit.first.batchId,
     ));
     _changes?.notify();
-    return true;
+    return (outcome: _DrainOutcome.acked, rebases: rebases);
+  }
+
+  /// The in-memory queue minus [unit]'s entries (by seq).
+  List<PendingWrite> _withoutUnit(
+      List<PendingWrite> queue, List<PendingWrite> unit) {
+    final seqs = {for (final p in unit) p.seq};
+    return [
+      for (final p in queue)
+        if (!seqs.contains(p.seq)) p
+    ];
+  }
+
+  /// Rebases queued siblings of just-acked paths onto the new server version,
+  /// using the in-memory [queue] (no store scan) and persisting each change.
+  /// Returns the updated in-memory queue.
+  Future<List<PendingWrite>> _rebaseSiblings(
+      List<PendingWrite> queue, Map<String, String> rebases) async {
+    if (rebases.isEmpty) return queue;
+    final out = <PendingWrite>[];
+    for (final p in queue) {
+      final updateTime = rebases[p.path];
+      if (updateTime == null) {
+        out.add(p);
+        continue;
+      }
+      final rebased = p.copyWith(base: PendingBase(updateTime: updateTime));
+      await _queue.replace(p.seq, rebased);
+      out.add(rebased);
+    }
+    return out;
   }
 
   /// Completes when the pending-write queue has fully drained. Stays pending
@@ -181,6 +251,7 @@ class SyncController {
     if (_conflictStatuses.contains(e.status)) {
       await _onConflict(unit, key, e);
     } else {
+      _autoResolveAttempts.remove(unit.first.seq);
       for (final p in unit) {
         await _queue.remove(p.seq);
       }
@@ -194,6 +265,26 @@ class SyncController {
 
   Future<void> _onConflict(
       List<PendingWrite> unit, String key, WincheException e) async {
+    if (_policy != ConflictPolicy.manual) {
+      final seq = unit.first.seq;
+      final attempts = (_autoResolveAttempts[seq] ?? 0) + 1;
+      if (attempts > _maxAutoResolveAttempts) {
+        // Auto-resolution can't make progress (e.g. a clientWins overwrite of an
+        // UPDATE to a now-missing doc keeps returning NOT_FOUND) — drop the unit
+        // as a failed write rather than livelock the drain.
+        _autoResolveAttempts.remove(seq);
+        for (final p in unit) {
+          await _queue.remove(p.seq);
+        }
+        _emit(WriteFailed(
+          paths: [for (final p in unit) p.path],
+          error: e,
+          batchId: unit.first.batchId,
+        ));
+        return;
+      }
+      _autoResolveAttempts[seq] = attempts;
+    }
     _pausedKeys.add(key);
     final serverDocs = <String, WireDocument?>{};
     for (final p in unit) {
@@ -252,6 +343,7 @@ class SyncController {
   /// Drop the unit and refresh the cache from the server doc.
   Future<void> _discard(
       List<PendingWrite> unit, Map<String, WireDocument?> serverDocs) async {
+    _autoResolveAttempts.remove(unit.first.seq);
     for (final p in unit) {
       await _queue.remove(p.seq);
       await _writeThroughServerDoc(p.path, serverDocs[p.path]);
@@ -304,9 +396,9 @@ class SyncController {
   }
 
   /// Promotes the acked write's optimistic effect to confirmed state, stamps the
-  /// server [wr] updateTime, applies server transformResults, then rebases
-  /// remaining same-path entries.
-  Future<void> _applyAck(PendingWrite entry, Map<String, Object?> wr) async {
+  /// server [wr] updateTime, applies server transformResults, and returns the
+  /// server updateTime (the caller rebases queued siblings of this path with it).
+  Future<String> _applyAck(PendingWrite entry, Map<String, Object?> wr) async {
     final updateTime = wr['updateTime'] as String? ??
         formatMetaTimestamp(entry.localCommitTime);
     if (entry.write is DeleteWrite) {
@@ -326,7 +418,7 @@ class SyncController {
         version: prior?.version ?? 0,
       ));
     }
-    await _queue.rebasePath(entry.path, PendingBase(updateTime: updateTime));
+    return updateTime;
   }
 
   Map<String, Value> _applyTransformResults(

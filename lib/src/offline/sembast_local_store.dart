@@ -90,6 +90,12 @@ class SembastLocalStore implements LocalStore {
     return [for (final r in records) _castMap(r.value)];
   }
 
+  @override
+  Future<List<Map<String, Object?>>> allDocuments() async {
+    final records = await _docs.find(_db);
+    return [for (final r in records) _castMap(r.value)];
+  }
+
   // --- Pending write queue ---
 
   @override

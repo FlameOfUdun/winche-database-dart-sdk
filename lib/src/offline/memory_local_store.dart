@@ -34,6 +34,10 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<List<Map<String, Object?>>> allDocuments() async =>
+      _docs.values.toList();
+
+  @override
   Future<int> nextPendingSeq() async => ++_seq;
 
   @override

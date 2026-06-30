@@ -80,7 +80,7 @@ class WireDocument {
 // ---------------------------------------------------------------------------
 
 /// The kind of a change in a listen.delta frame (PROTOCOL §7.6).
-enum ChangeKind { added, modified, removed }
+enum ChangeKind { added, modified, removed, deleted }
 
 /// A single change in a listen.delta frame (PROTOCOL §7.6).
 class WireChange {
@@ -102,6 +102,7 @@ class WireChange {
       'added' => ChangeKind.added,
       'modified' => ChangeKind.modified,
       'removed' => ChangeKind.removed,
+      'deleted' => ChangeKind.deleted,
       _ => throw FormatException('Unknown WireChange kind: "$kindStr"'),
     };
     return WireChange(
@@ -195,6 +196,10 @@ sealed class ServerFrame {
               ? (json['resumeToken'] as num).toInt()
               : null,
         ),
+      'listen.current' => ListenCurrentFrame(
+          subscriptionId: req<String>('subscriptionId'),
+          resumeToken: req<num>('resumeToken').toInt(),
+        ),
       _ => UnknownFrame(type, json),
     };
   }
@@ -271,6 +276,18 @@ final class ListenDeltaFrame extends ServerFrame {
   final int? resumeToken;
 }
 
+/// `{"type": "listen.current", "subscriptionId": "...", "resumeToken": ...}`
+/// — a covered resume: the subscription is live and up to date; no documents.
+final class ListenCurrentFrame extends ServerFrame {
+  const ListenCurrentFrame({
+    required this.subscriptionId,
+    required this.resumeToken,
+  });
+
+  final String subscriptionId;
+  final int resumeToken;
+}
+
 /// A frame type not recognized by this client version.
 /// The [ProtocolConnection] logs and ignores these.
 final class UnknownFrame extends ServerFrame {
@@ -316,6 +333,10 @@ Map<String, Object?> countFrame(String id, QuerySpec query) => {
       'query': query.toJson(),
     };
 
+/// The wire protocol version this SDK speaks. v2 introduces the `deleted`
+/// change kind; the server only emits `deleted` to clients advertising >= 2.
+const int wireProtocolVersion = 2;
+
 /// `{"type": "aggregate", "id": "...", "query": {...}, "aggregations": [...]}`
 Map<String, Object?> aggregateFrame(
         String id, QuerySpec query, List<Object?> aggregations) =>
@@ -326,9 +347,14 @@ Map<String, Object?> aggregateFrame(
       'aggregations': aggregations,
     };
 
-/// `{"type": "doc.listen", "id": "...", "path": "...", "resumeToken"?: ...}`
+/// `{"type": "doc.listen", "id": "...", "path": "...", "protocol": ..., "resumeToken"?: ...}`
 Map<String, Object?> docListenFrame(String id, String path, {int? resumeToken}) {
-  final frame = <String, Object?>{'type': 'doc.listen', 'id': id, 'path': path};
+  final frame = <String, Object?>{
+    'type': 'doc.listen',
+    'id': id,
+    'path': path,
+    'protocol': wireProtocolVersion,
+  };
   if (resumeToken != null) frame['resumeToken'] = resumeToken;
   return frame;
 }
@@ -382,7 +408,7 @@ Map<String, Object?> txRollbackFrame(String id, String transactionId) => {
       'transactionId': transactionId,
     };
 
-/// `{"type": "listen", "id": "...", "query": {...}, "resumeToken"?: ...}` (PROTOCOL §7.6)
+/// `{"type": "listen", "id": "...", "query": {...}, "protocol": ..., "resumeToken"?: ...}` (PROTOCOL §7.6)
 Map<String, Object?> listenFrame(
   String id,
   QuerySpec query, {
@@ -392,6 +418,7 @@ Map<String, Object?> listenFrame(
     'type': 'listen',
     'id': id,
     'query': query.toJson(),
+    'protocol': wireProtocolVersion,
   };
   if (resumeToken != null) frame['resumeToken'] = resumeToken;
   return frame;
