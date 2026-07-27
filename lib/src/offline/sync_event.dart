@@ -1,5 +1,6 @@
 import '../protocol/exceptions.dart';
 import '../protocol/messages.dart';
+import 'records.dart';
 
 /// How unresolved write conflicts are handled by default.
 enum ConflictPolicy {
@@ -76,10 +77,38 @@ final class WriteConflict extends SyncEvent {
 
 /// A pending write (or batch) failed permanently (e.g. permission denied) and
 /// was dropped from the queue.
+///
+/// [writes] carries the dropped entries in full, so an app can surface or
+/// re-apply the lost work — once this event is emitted, the queue no longer
+/// holds them anywhere.
 final class WriteFailed extends SyncEvent {
-  const WriteFailed({required this.paths, required this.error, this.batchId});
+  const WriteFailed({
+    required this.paths,
+    required this.error,
+    required this.writes,
+    this.batchId,
+  });
 
   final List<String> paths;
   final WincheException error;
+
+  /// The dropped pending writes, in queue order.
+  final List<PendingWrite> writes;
+
   final String? batchId;
+}
+
+/// The queue is stalled because the server rejected the head unit with
+/// `UNAUTHENTICATED` — the token is missing, expired, or no longer valid.
+///
+/// Unlike [WriteFailed] nothing is dropped: an auth failure says nothing about
+/// the write itself, so the unit stays queued exactly where it was. Refresh the
+/// token behind `tokenProvider` and call `WincheDatabase.reconnect()` to resume
+/// draining.
+final class SyncPaused extends SyncEvent {
+  const SyncPaused({required this.paths, required this.error});
+
+  /// The document path(s) of the unit the queue is stalled on.
+  final List<String> paths;
+  final UnauthenticatedException error;
 }

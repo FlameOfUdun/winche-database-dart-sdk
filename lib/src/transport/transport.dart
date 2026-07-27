@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../protocol/connection.dart';
+import '../protocol/exceptions.dart';
 import '../protocol/messages.dart';
 
 part 'ws_transport.dart';
@@ -25,6 +26,14 @@ abstract interface class Transport {
   /// reconnects (does not complete on disconnect).
   Stream<ConnectionState> get connectionStates;
 
+  /// Drops the current socket and re-dials, re-reading the auth token.
+  /// Subscriptions resume in place and [reconnects] fires on success.
+  Future<void> reconnect();
+
   /// Closes the transport and its underlying connection.
-  void dispose();
+  ///
+  /// Completes once the connection is closed and its listener streams have been
+  /// completed, so callers can order teardown against it (e.g. closing the local
+  /// store only after no subscription can still fire).
+  Future<void> dispose();
 }

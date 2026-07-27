@@ -69,7 +69,7 @@ void main() {
 
       final result = await h.db.doc('users/u1').set({'name': 'Alice'});
 
-      final set = singleWrite(h.lastRequest)['set'] as Map<String, Object?>;
+      final set = singleWrite(await h.sentWrite())['set'] as Map<String, Object?>;
       expect(set['path'], 'users/u1');
       expect(set['merge'], false);
       expect(set['fields'], {
@@ -85,7 +85,7 @@ void main() {
       final h = FacadeHarness();
       h.handler = (f) => h.respond(f, writeResultsPayload());
       await h.db.doc('users/u1').set({'a': 1}, merge: true);
-      final set = singleWrite(h.lastRequest)['set'] as Map<String, Object?>;
+      final set = singleWrite(await h.sentWrite())['set'] as Map<String, Object?>;
       expect(set['merge'], true);
       await h.close();
     });
@@ -97,7 +97,7 @@ void main() {
         'name': 'Alice',
         'visits': FieldValue.increment(1),
       });
-      final set = singleWrite(h.lastRequest)['set'] as Map<String, Object?>;
+      final set = singleWrite(await h.sentWrite())['set'] as Map<String, Object?>;
       expect((set['fields'] as Map).containsKey('visits'), isFalse);
       final transforms = set['transforms'] as List<Object?>;
       expect(transforms.single, {
@@ -114,7 +114,7 @@ void main() {
       await h.db
           .doc('users/u1')
           .set({'a': 1}, precondition: const Precondition(exists: false));
-      final set = singleWrite(h.lastRequest)['set'] as Map<String, Object?>;
+      final set = singleWrite(await h.sentWrite())['set'] as Map<String, Object?>;
       expect(set['precondition'], {'exists': false});
       await h.close();
     });
@@ -127,7 +127,7 @@ void main() {
       h.handler = (f) => h.respond(f, writeResultsPayload());
       await h.db.doc('users/u1').update({'profile.age': 31});
       final update =
-          singleWrite(h.lastRequest)['update'] as Map<String, Object?>;
+          singleWrite(await h.sentWrite())['update'] as Map<String, Object?>;
       expect(update['path'], 'users/u1');
       expect(update['fields'], {
         'profile.age': {'integerValue': '31'},
@@ -144,7 +144,7 @@ void main() {
             const Precondition.updateTimeRaw('2026-06-08T10:00:00+00:00'),
       );
       final update =
-          singleWrite(h.lastRequest)['update'] as Map<String, Object?>;
+          singleWrite(await h.sentWrite())['update'] as Map<String, Object?>;
       expect(
           update['precondition'], {'updateTime': '2026-06-08T10:00:00+00:00'});
       await h.close();
@@ -157,7 +157,7 @@ void main() {
       final h = FacadeHarness();
       h.handler = (f) => h.respond(f, writeResultsPayload());
       await h.db.doc('users/u1').delete();
-      final del = singleWrite(h.lastRequest)['delete'] as Map<String, Object?>;
+      final del = singleWrite(await h.sentWrite())['delete'] as Map<String, Object?>;
       expect(del['path'], 'users/u1');
       expect(del['cascade'], false);
       await h.close();
@@ -170,7 +170,7 @@ void main() {
             cascade: true,
             precondition: const Precondition(exists: true),
           );
-      final del = singleWrite(h.lastRequest)['delete'] as Map<String, Object?>;
+      final del = singleWrite(await h.sentWrite())['delete'] as Map<String, Object?>;
       expect(del['cascade'], true);
       expect(del['precondition'], {'exists': true});
       await h.close();
@@ -244,7 +244,7 @@ void main() {
 
       expect(ref.path, startsWith('users/'));
       expect(ref.id.length, 32);
-      final set = singleWrite(h.lastRequest)['set'] as Map<String, Object?>;
+      final set = singleWrite(await h.sentWrite())['set'] as Map<String, Object?>;
       expect(set['path'], ref.path);
       expect(set['fields'], {
         'name': {'stringValue': 'Bob'},

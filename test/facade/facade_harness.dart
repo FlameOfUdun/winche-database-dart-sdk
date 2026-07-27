@@ -110,8 +110,20 @@ class FacadeHarness {
   /// The most recent client request frame (excluding `hello`).
   Map<String, Object?> get lastRequest => requests.last;
 
+  /// Waits for the sync controller to put a `write` frame on the wire and
+  /// returns it.
+  ///
+  /// Writes are local-first: `set` / `update` / `delete` / `batch.commit` return
+  /// as soon as the entry is durably queued, and the drain sends the frame a few
+  /// event-loop turns later — so a test cannot read [lastRequest] straight after
+  /// awaiting the write call.
+  Future<Map<String, Object?>> sentWrite() async {
+    await pump();
+    return requests.lastWhere((f) => f['type'] == 'write');
+  }
+
   Future<void> close() async {
-    db.close();
+    await db.close();
     await pump();
   }
 }

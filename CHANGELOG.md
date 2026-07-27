@@ -1,5 +1,86 @@
 # Changelog
 
+## 5.0.0
+
+### Added
+
+- **`WincheDatabaseConfig.namespaceResolver`** — **required** for a persistent
+  store; scopes it to one identity (`winche_<namespace>.db`). The local store is
+  single-tenant: the document cache, pending-write queue, resume tokens and query
+  membership carry no identity, so a shared store let a second user on the same
+  device read the previous user's cached documents and replay their un-synced
+  writes under the new token (rejected with `PERMISSION_DENIED`, and dropped).
+  Switching users is now `await db.close()` + a new database; each user's queued
+  writes stay on disk and drain when they sign back in. Resolved lazily and
+  cached, like `directoryResolver` — it pins the identity for the lifetime of the
+  instance.
+- **`WincheDatabase.reconnect()`** — drops the socket and re-dials, re-reading
+  `tokenProvider`. The token rides on the WebSocket upgrade, so it was previously
+  impossible to apply a rotated token to a live connection: the client kept using
+  the old one until the socket happened to drop. Listeners resubscribe in place,
+  including any that had died permanently on a `PERMISSION_DENIED` /
+  `UNAUTHENTICATED` subscribe.
+- `SyncPaused` sync event and `WriteFailed.writes` (see below).
+
+### Fixed
+
+- **A listener no longer loses its initial snapshot to a frame race.** A client
+  learns its `subscriptionId` from the subscribe *response*, so it could only
+  register a frame listener after that response landed — but a server may push
+  the first `listen.snapshot` before it, and `ProtocolConnection` dropped frames
+  for an unregistered subscription id. The listener then sat on its cache-first
+  emission forever, never going live. Observed against the .NET sample server for
+  any query carrying an `orderBy` (which reordered the two frames), and it broke
+  the Flutter example app's record list. Frames arriving ahead of their
+  subscription are now buffered and replayed, in arrival order, when the listener
+  attaches; the buffer is bounded so unclaimed subscription ids cannot grow it.
+- **`close()` no longer races live listeners.** Closing the database while a
+  `snapshots()` listener was active tore down the socket and the local store at
+  the same time; the socket teardown drove one last listener emission, which read
+  a store that had already closed and threw an uncatchable
+  `Bad state: database is closed`. `close()` now tears down in dependency order —
+  live listeners, then the transport, then the sync controller, then the store —
+  and every listener emission is gated on the database still being open. Live
+  `snapshots()` streams now complete with `done` on close.
+- The sync controller waits for an in-flight drain to unwind before the store is
+  closed underneath it, and `LazyLocalStore` degrades to no-ops after `close()`
+  so a straggling callback can never surface a store error.
+- `WsTransport` no longer re-dials a fresh socket if an operation is issued after
+  `dispose()`; it fails with `UnavailableException` instead.
+- **`set` / `update` / `delete` / `batch.commit` no longer block on the server.**
+  The write coordinator awaited the drain it kicked off, so an "optimistic
+  acknowledgement" actually waited for the round-trip whenever the connection was
+  up — it only appeared instant offline, where the request fails fast. They now
+  return as soon as the write is durably queued and the local view reflects it,
+  with the drain running in the background as documented. Watch `syncEvents` (or
+  `waitForPendingWrites()`) for the server outcome.
+- **An `UNAUTHENTICATED` write is no longer destroyed.** The drain treated any
+  non-conflict status as terminal, deleting the unit from the queue — so an
+  expired token silently discarded un-synced work. It now halts the drain (like
+  being offline), leaves the queue untouched, and reports `SyncPaused`; the next
+  reconnect resumes it. `PERMISSION_DENIED` is still terminal, but `WriteFailed`
+  now carries the dropped `PendingWrite`s in `writes` so the work is recoverable.
+
+### Changed
+
+- **Breaking:** `WincheDatabase.close()` returns `Future<void>` and should be
+  awaited. It is idempotent, and resolves only once the local store is really
+  closed — await it before opening another database over the same file (e.g. when
+  switching users). Existing `db.close();` call sites keep compiling.
+- **Breaking:** `Transport.dispose()` returns `Future<void>` (was `void`) and
+  `Transport.reconnect()` is new. Only affects custom `Transport`
+  implementations.
+- **Breaking:** `SyncEvent` gained the `SyncPaused` variant — exhaustive
+  `switch`es over it need a new arm. `WriteFailed` gained a required `writes`
+  argument (only affects code constructing the event, not consumers reading it).
+- **Breaking:** a persistent `WincheDatabase` now requires
+  `namespaceResolver`, and its database file moves from `winche.db` to
+  `winche_<namespace>.db`. **There is no migration.** Existing caches simply
+  rebuild themselves, but any un-synced writes sitting in the old queue are
+  orphaned — drain the queue (`waitForPendingWrites()`) before shipping this
+  upgrade if that matters. `inMemory: true` is unaffected.
+- New `WincheDatabase.isClosed`.
+
 ## 4.2.0
 
 - Deletion reconciliation: server-side deletes are now tombstoned locally, so a

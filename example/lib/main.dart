@@ -130,7 +130,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _syncSub?.cancel();
     _connSub?.cancel();
-    _db.close();
+    unawaited(_db.close()); // State.dispose is sync; close settles in background
     super.dispose();
   }
 
@@ -144,6 +144,10 @@ class _HomePageState extends State<HomePage> {
           'Write conflict: ${event.error.message} — discarding local write',
         );
         event.discard();
+      } else if (event is SyncPaused) {
+        // Nothing was dropped — the token is dead. A real app refreshes it and
+        // calls `_db.reconnect()`; this sample has a hardcoded token.
+        _snack('Sync paused (unauthenticated): ${event.error.message}');
       }
     });
 

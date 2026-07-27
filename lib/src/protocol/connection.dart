@@ -124,6 +124,22 @@ class ProtocolConnection {
   /// Per-subscription listener streams.
   final Map<String, StreamController<ServerFrame>> _listeners = {};
 
+  /// Listener frames that arrived before their subscription was registered.
+  ///
+  /// A client learns its `subscriptionId` from the subscribe *response*, so it
+  /// can only call [listenEvents] after that response lands — but the server is
+  /// free to push the first `listen.snapshot` before it. Without this buffer
+  /// that snapshot has nowhere to go and is dropped, and the listener then waits
+  /// forever for a delta (PROTOCOL §7.6 guarantees the snapshot, not its
+  /// ordering against the response).
+  ///
+  /// Insertion-ordered, so trimming evicts the oldest subscription first.
+  final Map<String, List<ServerFrame>> _earlyFrames = {};
+
+  /// Cap on total buffered frames, so a server pushing frames for subscription
+  /// ids the client never claims cannot grow this without bound.
+  static const _maxEarlyFrames = 128;
+
   /// Sequential send queue — ensures frames are sent in order.
   final List<Map<String, Object?>> _sendQueue = [];
   bool _sending = false;
@@ -240,7 +256,8 @@ class ProtocolConnection {
   Stream<ServerFrame> listenEvents(String subscriptionId) {
     final controller = _listeners.putIfAbsent(
       subscriptionId,
-      () => StreamController<ServerFrame>.broadcast(),
+      () => StreamController<ServerFrame>.broadcast(
+          onListen: () => _flushEarlyFrames(subscriptionId)),
     );
     return controller.stream;
   }
@@ -250,8 +267,132 @@ class ProtocolConnection {
   /// Call this after sending an unlisten frame so the entry doesn't accumulate
   /// in the internal listeners map. Idempotent — no-op if not found.
   void releaseSubscription(String id) {
+    _earlyFrames.remove(id);
     final ctrl = _listeners.remove(id);
     if (ctrl != null && !ctrl.isClosed) ctrl.close();
+  }
+
+  /// Routes one listener frame to its subscription, buffering it when the
+  /// subscribe response has not landed yet.
+  ///
+  /// Checks the buffer before the controller so that a frame arriving in the gap
+  /// between [_flushEarlyFrames] scheduling its drain and running it queues
+  /// behind the buffered ones instead of overtaking them.
+  void _routeListenerFrame(String subscriptionId, ServerFrame frame) {
+    final buffered = _earlyFrames[subscriptionId];
+    if (buffered != null) {
+      buffered.add(frame);
+      _trimEarlyFrames();
+      return;
+    }
+    final ctrl = _listeners[subscriptionId];
+    if (ctrl != null) {
+      if (!ctrl.isClosed) ctrl.add(frame);
+      return;
+    }
+    _earlyFrames[subscriptionId] = [frame];
+    _trimEarlyFrames();
+  }
+
+  /// Delivers any frames buffered for [subscriptionId] to its now-listening
+  /// controller. Drained in a microtask because this runs from `onListen`, i.e.
+  /// while the subscription is still being wired up.
+  void _flushEarlyFrames(String subscriptionId) {
+    if (!_earlyFrames.containsKey(subscriptionId)) return;
+    scheduleMicrotask(() {
+      final pending = _earlyFrames.remove(subscriptionId);
+      final ctrl = _listeners[subscriptionId];
+      if (pending == null || ctrl == null || ctrl.isClosed) return;
+      for (final frame in pending) {
+        ctrl.add(frame);
+      }
+    });
+  }
+
+  void _trimEarlyFrames() {
+    var total = 0;
+    for (final frames in _earlyFrames.values) {
+      total += frames.length;
+    }
+    while (total > _maxEarlyFrames && _earlyFrames.isNotEmpty) {
+      total -= _earlyFrames.remove(_earlyFrames.keys.first)!.length;
+    }
+  }
+
+  /// Drops the current socket and re-dials once, re-reading `tokenProvider`.
+  ///
+  /// This is the only way to push a rotated auth token onto a live connection:
+  /// the token is a query parameter on the WebSocket upgrade, so it is fixed for
+  /// the lifetime of a socket. Listener streams and the [reconnects] signal are
+  /// preserved, so subscriptions resume in place exactly as after a network
+  /// drop, and [reconnects] fires on success.
+  ///
+  /// Throws if the re-dial fails — [UnauthenticatedException] when the server
+  /// rejects the new token, [UnavailableException] when it is unreachable. In
+  /// that case the connection falls back to its normal post-drop behaviour:
+  /// the auto-reconnect loop if [ConnectionConfig.autoReconnect] is set,
+  /// otherwise `disconnected`.
+  Future<void> reconnect() async {
+    if (_state == ConnectionState.closed) {
+      throw StateError('Cannot reconnect: connection is closed.');
+    }
+    _pingTimer?.cancel();
+    // Take the old socket down first: `disconnected` is what tells live feeds to
+    // stop treating their subscriptions as delivering.
+    final old = _channel;
+    _channel = null;
+    await _sub?.cancel();
+    _sub = null;
+    _failAllPending('Reconnecting to apply a new auth token');
+    try {
+      await old?.sink.close().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // Ignore errors from closing a socket we are discarding anyway.
+    }
+    if (_state == ConnectionState.closed) return;
+
+    _setState(ConnectionState.reconnecting);
+    try {
+      await _dialOnce();
+    } catch (e) {
+      if (_state == ConnectionState.closed) return;
+      if (config.autoReconnect) {
+        unawaited(_reconnectLoop());
+      } else {
+        _setState(ConnectionState.disconnected);
+      }
+      rethrow;
+    }
+    _setState(ConnectionState.ready);
+    _startPing();
+    if (!_reconnectController.isClosed) _reconnectController.add(null);
+  }
+
+  /// One dial + handshake on the reconnect path (shared by [reconnect] and
+  /// [_reconnectLoop]). Leaves the state alone — callers own the transitions.
+  Future<void> _dialOnce({
+    Duration welcomeTimeout = const Duration(seconds: 15),
+  }) async {
+    try {
+      _channel = await _channelFactory(await _dialUri());
+    } on WincheException {
+      rethrow; // a tokenProvider that itself reports an auth failure
+    } catch (e) {
+      throw UnavailableException('Failed to open WebSocket channel: $e');
+    }
+    _sub = _channel!.stream.listen(
+      _onFrame,
+      onError: _onError,
+      onDone: _onDoneReconnect,
+    );
+    _welcomeCompleter = Completer<void>();
+    await _welcomeCompleter!.future.timeout(
+      welcomeTimeout,
+      onTimeout: () {
+        _welcomeCompleter = null;
+        throw const UnavailableException('Reconnect handshake timed out');
+      },
+    );
   }
 
   /// Sends a graceful close.
@@ -364,13 +505,13 @@ class ProtocolConnection {
         }
 
       case ListenSnapshotFrame(:final subscriptionId):
-        _listeners[subscriptionId]?.add(frame);
+        _routeListenerFrame(subscriptionId, frame);
 
       case ListenDeltaFrame(:final subscriptionId):
-        _listeners[subscriptionId]?.add(frame);
+        _routeListenerFrame(subscriptionId, frame);
 
       case ListenCurrentFrame(:final subscriptionId):
-        _listeners[subscriptionId]?.add(frame);
+        _routeListenerFrame(subscriptionId, frame);
 
       case UnknownFrame():
         // Log-and-ignore: future server capabilities.
@@ -429,22 +570,7 @@ class ProtocolConnection {
 
       // Try to establish a new connection.
       try {
-        _channel = await _channelFactory(await _dialUri());
-        _sub = _channel!.stream.listen(
-          _onFrame,
-          onError: _onError,
-          onDone: _onDoneReconnect,
-        );
-
-        _welcomeCompleter = Completer<void>();
-
-        await _welcomeCompleter!.future.timeout(
-          const Duration(seconds: 15),
-          onTimeout: () {
-            _welcomeCompleter = null;
-            throw const UnavailableException('Reconnect handshake timed out');
-          },
-        );
+        await _dialOnce();
 
         // Connected!
         _setState(ConnectionState.ready);
@@ -494,6 +620,7 @@ class ProtocolConnection {
   /// Closes all listener stream controllers cleanly (no error).
   /// Called only from [close] — on disconnect, listeners go quiet per PROTOCOL.
   void _completeAllListeners() {
+    _earlyFrames.clear();
     for (final ctrl in _listeners.values) {
       if (!ctrl.isClosed) ctrl.close();
     }

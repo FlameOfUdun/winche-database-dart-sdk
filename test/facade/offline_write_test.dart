@@ -2,8 +2,26 @@ import 'package:test/test.dart';
 import 'package:winche_database/winche_database.dart';
 
 import '../offline/fake_local_store.dart';
+import 'facade_harness.dart';
 
 void main() {
+  test('a write returns without waiting for the server round-trip', () async {
+    final h = FacadeHarness();
+    // Answer everything except the write, so the drain parks on the wire.
+    h.handler = (f) {
+      if (f['type'] != 'write') h.respond(f, {});
+    };
+
+    // If `set` awaited the drain this never completes.
+    await h.db
+        .doc('users/u1')
+        .set({'name': 'Alice'}).timeout(const Duration(seconds: 2));
+
+    expect(await h.db.hasPendingWrites, isTrue,
+        reason: 'the write is queued and still draining in the background');
+    await h.close();
+  });
+
   WincheDatabase offlineDb(LocalStore store) => WincheDatabase.withStore(
         ConnectionConfig(
             uri: Uri.parse('ws://localhost:1/documents/ws'),

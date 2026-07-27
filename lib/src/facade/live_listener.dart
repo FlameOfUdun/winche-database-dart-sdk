@@ -33,13 +33,27 @@ abstract class _LiveListener<TSnapshot> {
   /// Stores the latest server update and writes it through to the confirmed cache.
   Future<void> _storeServerDocs(_FeedUpdate update);
 
-  /// Builds and emits the current effective snapshot to [_controller].
-  Future<void> _emit();
+  /// Builds and emits the current effective snapshot to [_controller]. Only
+  /// called through [_emit], which gates it on the listener/database still
+  /// being live.
+  Future<void> _emitNow();
 
   /// Releases any references this listener pins against eviction. Default no-op.
   void _releaseReferences() {}
 
+  /// Clears a permanent subscribe failure so the next reconnect tries again.
+  /// Driven by [WincheDatabase.reconnect] when the auth token changes.
+  void _clearPermanentFailure() => _feed?._clearPermanentFailure();
+
   // ── Lifecycle ───────────────────────────────────────────────────────────────
+
+  /// Emits the current effective snapshot, unless this listener is cancelled or
+  /// the database has been closed. Every emission path funnels through here so
+  /// no store read can outlive [WincheDatabase.close].
+  Future<void> _emit() async {
+    if (_cancelled || _db.isClosed) return;
+    await _emitNow();
+  }
 
   Stream<TSnapshot> stream() {
     final controller = StreamController<TSnapshot>(
@@ -51,6 +65,14 @@ abstract class _LiveListener<TSnapshot> {
   }
 
   Future<void> _onListen() async {
+    if (_db.isClosed) {
+      await _controller?.close();
+      _controller = null;
+      return;
+    }
+    // Registered so close() can tear this listener down before the store goes.
+    _db._registerListener(this);
+
     // Cache-first emission so the consumer gets an immediate snapshot.
     await _emit();
     if (_cancelled) return;
@@ -80,6 +102,7 @@ abstract class _LiveListener<TSnapshot> {
 
   Future<void> _onCancel() async {
     _cancelled = true;
+    _db._unregisterListener(this);
     _releaseReferences();
     await _feedSub?.cancel();
     _feedSub = null;
@@ -91,7 +114,31 @@ abstract class _LiveListener<TSnapshot> {
     _controller = null;
   }
 
+  /// Tears this listener down from [WincheDatabase.close] — before the transport
+  /// and the local store go away. Detaches from the feed first so a socket
+  /// teardown can no longer drive an emission, then completes the consumer's
+  /// stream with `done`.
+  ///
+  /// The unlisten frame is skipped: the socket is being closed anyway, and the
+  /// server drops the subscription with it.
+  Future<void> _shutdown() async {
+    _cancelled = true;
+    _releaseReferences();
+    await _feedSub?.cancel();
+    _feedSub = null;
+    await _feed?.dispose(sendUnlisten: false);
+    _feed = null;
+    await _changeSub?.cancel();
+    _changeSub = null;
+    final controller = _controller;
+    _controller = null;
+    // Not awaited: a controller with no subscriber never completes its close
+    // future, which would hang close().
+    if (controller != null && !controller.isClosed) unawaited(controller.close());
+  }
+
   Future<void> _onServerDocs(_FeedUpdate? update) async {
+    if (_cancelled || _db.isClosed) return;
     if (update == null) {
       // Feed down: fall back to cache/last-known.
       _serverActive = false;
@@ -165,7 +212,7 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
   void _releaseReferences() => _db.activeTargets.unpin(this);
 
   @override
-  Future<void> _emit() async {
+  Future<void> _emitNow() async {
     final controller = _controller;
     if (controller == null || controller.isClosed) return;
 
@@ -319,7 +366,7 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
   void _releaseReferences() => _db.activeTargets.unpin(this);
 
   @override
-  Future<void> _emit() async {
+  Future<void> _emitNow() async {
     final controller = _controller;
     if (controller == null || controller.isClosed) return;
     // A covered-resume (listen.current) marks us active without delivering a

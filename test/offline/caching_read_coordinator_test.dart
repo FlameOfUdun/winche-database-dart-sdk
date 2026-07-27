@@ -37,7 +37,10 @@ class _FakeTransport implements Transport {
   ConnectionState get connectionState =>
       offline ? ConnectionState.disconnected : ConnectionState.ready;
   @override
-  void dispose() {}
+  Future<void> reconnect() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 Map<String, Object?> wireDoc(String path, Map<String, Object?> taggedFields,

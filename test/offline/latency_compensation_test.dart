@@ -31,7 +31,10 @@ class _OfflineTransport implements Transport {
   @override
   ConnectionState get connectionState => ConnectionState.disconnected;
   @override
-  void dispose() {}
+  Future<void> reconnect() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 void main() {

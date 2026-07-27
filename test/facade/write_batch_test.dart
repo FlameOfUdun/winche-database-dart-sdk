@@ -18,8 +18,7 @@ void main() {
 
     final results = await batch.commit();
 
-    expect(h.lastRequest['type'], 'write');
-    final writes = h.lastRequest['writes'] as List<Object?>;
+    final writes = (await h.sentWrite())['writes'] as List<Object?>;
     expect(
         writes.map((w) => (w as Map).keys.single), ['set', 'update', 'delete']);
     expect(results, hasLength(3));
@@ -33,7 +32,7 @@ void main() {
       ..update(h.db.doc('users/u2'), {'count': FieldValue.increment(2)});
     await batch.commit();
 
-    final writes = h.lastRequest['writes'] as List<Object?>;
+    final writes = (await h.sentWrite())['writes'] as List<Object?>;
     final set = (writes[0] as Map)['set'] as Map<String, Object?>;
     expect(set['merge'], true);
     final update = (writes[1] as Map)['update'] as Map<String, Object?>;
@@ -61,7 +60,8 @@ void main() {
           precondition: const Precondition(exists: true));
     await batch.commit();
     final del =
-        ((h.lastRequest['writes'] as List).single as Map)['delete'] as Map;
+        (((await h.sentWrite())['writes'] as List).single as Map)['delete']
+            as Map;
     expect(del['precondition'], {'exists': true});
   });
 }

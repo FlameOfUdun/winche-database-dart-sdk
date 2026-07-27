@@ -61,8 +61,9 @@ import 'package:winche_database/winche_database.dart';
 final db = WincheDatabase(
   WincheDatabaseConfig(
     uri: Uri.parse('ws://localhost:5183/documents/ws'),
-    tokenProvider: () => currentAuthToken,     // optional
-    directoryResolver: () async => appDir,     // required on native (sembast directory)
+    tokenProvider: () => currentAuthToken,        // optional
+    namespaceResolver: () => currentUserId,       // required (scopes the local store)
+    directoryResolver: () async => appDir,        // required on native (sembast directory)
   ),
 );
 ```
@@ -70,16 +71,24 @@ final db = WincheDatabase(
 The connection dials lazily on the first operation. Authentication happens at the
 WebSocket upgrade via an `?access_token=` query parameter built from
 `tokenProvider`. There is **no in-band auth-refresh**: to rotate an expired token,
-return the new value from `tokenProvider` — the reconnect path picks it up
-automatically.
+return the new value from `tokenProvider` and call `await db.reconnect()` — see
+[Authentication and user switching](#authentication-and-user-switching).
 
 All options live on `WincheDatabaseConfig`: `uri`, `tokenProvider`, `pingInterval`
 (default 30 s), `autoReconnect` (default true), `maxBackoff` (default 30 s),
 `maxFrameBytes` (default 1 MiB — see [Writes](#writes-offline-first)), `inMemory`
-(default false), `directoryResolver` (sembast directory; see
-[Persistence](#persistence)), `conflictPolicy` (default `manual`), and the
-optional local-cache caps `maxCachedDocuments` and `cacheSizeBytes` (both default
-null = unbounded — see [Cache management](#cache-management)).
+(default false), `namespaceResolver` (**required** for a persistent store —
+scopes it to one identity; see
+[Authentication and user switching](#authentication-and-user-switching)),
+`directoryResolver` (sembast directory; see [Persistence](#persistence)),
+`conflictPolicy` (default `manual`), and the optional local-cache caps
+`maxCachedDocuments` and `cacheSizeBytes` (both default null = unbounded — see
+[Cache management](#cache-management)).
+
+The two resolvers are both lazy — resolved on first store access and cached — so
+the constructor stays synchronous and cheap. `directoryResolver` says *where* the
+database lives (async, because `path_provider` is); `namespaceResolver` says
+*which* database in there.
 
 ---
 
@@ -280,6 +289,7 @@ flowchart TD
   Dr -->|ack| SY["WriteSynced"]
   Dr -->|version conflict| CO["WriteConflict<br/>retry / discard / overwrite"]
   Dr -->|permission / etc| FA["WriteFailed (dropped)"]
+  Dr -->|unauthenticated| PA["SyncPaused<br/>stays queued, resumes on reconnect()"]
   Dr -->|offline| OF["stays queued, retries on reconnect"]
 ```
 
@@ -291,8 +301,14 @@ db.syncEvents.listen((e) {
     // ConflictPolicy.manual (default): resolve explicitly
     e.discard(); // or e.retry() / e.overwrite()
   } else if (e is WriteFailed) {
-    // permanent (e.g. permission denied); dropped from the queue
+    // permanent (e.g. permission denied); dropped from the queue.
+    // e.writes carries the dropped entries in full — this is the only place
+    // they still exist, so capture them here if the work matters.
     print(e.error);
+  } else if (e is SyncPaused) {
+    // the token is dead; nothing was dropped. Refresh and resume:
+    await refreshToken();
+    await db.reconnect();
   }
 });
 
@@ -363,6 +379,69 @@ stateDiagram-v2
 
 The client reconnects automatically on any drop (network loss, server restart,
 any close code). The only way to reach `closed` is by calling `close()`.
+
+`close()` returns a `Future` — **await it**. It tears down in dependency order
+(live listeners → transport → sync controller → local store), so nothing can
+read the local store after it is closed. Live `snapshots()` streams complete
+with `done`, and the future resolves only once the store is really closed, which
+is what makes it safe to open a new `WincheDatabase` over the same on-disk file
+right afterwards. It is idempotent; `db.isClosed` reports the current state.
+
+```dart
+await db.close();
+```
+
+### Authentication and user switching
+
+The auth token is a query parameter on the WebSocket **upgrade**, so it is fixed
+for the lifetime of a socket. Returning a new value from `tokenProvider` changes
+nothing until the connection is re-dialled.
+
+```dart
+await refreshToken();
+await db.reconnect();   // drops the socket, re-dials with the new token
+```
+
+`reconnect()` preserves live listeners: they resubscribe in place, including any
+that had died on a `PERMISSION_DENIED` / `UNAUTHENTICATED` subscribe, and a write
+queue stalled with `SyncPaused` resumes draining. It throws
+`UnauthenticatedException` if the server rejects the new token.
+
+**A user change is not a token change.** The local store is single-tenant — the
+document cache, the pending-write queue, listener resume tokens and query
+membership carry no identity. Reusing one database across two users means the
+second user reads the first user's cached documents, and the first user's
+un-synced writes replay under the second user's token (the server rejects them
+with `PERMISSION_DENIED`, and they are dropped).
+
+`namespaceResolver` is therefore **required** for a persistent store — scoping is
+a decision you take, not one you can forget. Rebuild the database on sign-in:
+
+```dart
+WincheDatabase openFor(String userId) => WincheDatabase(
+      WincheDatabaseConfig(
+        uri: uri,
+        tokenProvider: () => auth.tokenFor(userId),
+        namespaceResolver: () => userId,         // → winche_<userId>.db
+        directoryResolver: () async => appDir,
+      ),
+    );
+
+// on user switch
+await db.close();        // await it: the store must be closed before reopening
+db = openFor(newUserId);
+```
+
+Each identity gets its own database file, so nothing leaks between accounts, and
+the previous user's queued writes stay on disk and drain when they sign back in.
+
+The resolved namespace is **cached for the lifetime of the instance** — it pins
+the identity. `namespaceResolver: () => currentUserId` does not follow a user
+change; closing and rebuilding is what does. It must resolve to
+`[A-Za-z0-9._-]+` (it is a file-name component), throwing `ArgumentError` on
+first store access otherwise, and must be omitted when `inMemory: true`.
+
+---
 
 Operations throw a `WincheException` subclass on failure:
 `PermissionDeniedException`, `UnauthenticatedException`, `NotFoundException`,

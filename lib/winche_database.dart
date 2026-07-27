@@ -48,7 +48,13 @@ export 'src/offline/sembast_local_store.dart' show SembastLocalStore;
 export 'src/offline/lazy_local_store.dart' show LazyLocalStore;
 export 'src/offline/read_coordinator.dart' show Source, GetOptions;
 export 'src/offline/sync_event.dart'
-    show SyncEvent, WriteSynced, WriteConflict, WriteFailed, ConflictPolicy;
+    show
+        SyncEvent,
+        WriteSynced,
+        WriteConflict,
+        WriteFailed,
+        SyncPaused,
+        ConflictPolicy;
 export 'src/offline/records.dart' show PendingWrite, PendingKind, PendingBase;
 
 part 'src/facade/converters.dart';

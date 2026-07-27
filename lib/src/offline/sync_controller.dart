@@ -15,8 +15,9 @@ import 'sync_event.dart';
 import 'write_queue.dart';
 
 /// Result of draining one unit: a clean ack (drop it from the in-memory view),
-/// any other queue mutation (re-read fresh), or the server was offline (stop).
-enum _DrainOutcome { acked, mutated, offline }
+/// any other queue mutation (re-read fresh), or the drain cannot proceed and
+/// must stop — the server was unreachable, or it rejected us as unauthenticated.
+enum _DrainOutcome { acked, mutated, halted }
 
 /// Drains the offline [WriteQueue] to the server, advancing the confirmed cache
 /// on ack and reporting progress on [events].
@@ -53,12 +54,27 @@ class SyncController {
   Stream<SyncEvent> get events => _events.stream;
 
   bool _draining = false;
+  bool _disposed = false;
+
+  /// Whether the drain is currently stopped on an `UNAUTHENTICATED` rejection.
+  /// Latched so a repeated drain attempt under the same dead token doesn't
+  /// spam [SyncPaused]; cleared on a reconnect or the next successful write.
+  bool _authStalled = false;
+
+  /// The in-flight [drain], so [dispose] can wait for it to unwind instead of
+  /// letting it keep touching the store after the database is closed.
+  Future<void>? _drainInFlight;
   StreamSubscription<void>? _reconnectSub;
 
   /// Subscribes to reconnect events to drive draining; call once after wiring.
   void start() {
     _reconnectSub = _transport.reconnects.listen(
-      (_) => drain(),
+      (_) {
+        // A fresh socket re-read `tokenProvider`, so a previous auth stall may
+        // be over — let the queue try again and report a new stall if not.
+        _authStalled = false;
+        drain();
+      },
       onError: (_) {}, // connection errors are handled inside drain()
       cancelOnError: false,
     );
@@ -74,12 +90,17 @@ class SyncController {
   /// from the in-memory view (no re-read → linear). A conflict/error path mutates
   /// the queue unpredictably, so the view is re-read fresh — preserving exact
   /// conflict behavior.
-  Future<void> drain() async {
-    if (_draining) return;
+  Future<void> drain() {
+    if (_draining || _disposed) return Future<void>.value();
+    return _drainInFlight = _drain();
+  }
+
+  Future<void> _drain() async {
     _draining = true;
     try {
       var queue = await _queue.all();
       while (true) {
+        if (_disposed) break;
         var unit = _firstUnpausedUnit(queue);
         if (unit == null) {
           // In-memory view exhausted of actionable units. Re-read once to pick up
@@ -91,14 +112,16 @@ class SyncController {
           if (unit == null) break;
         }
         final r = await _drainUnit(unit);
-        if (r.outcome == _DrainOutcome.offline) break;
+        if (r.outcome == _DrainOutcome.halted) break;
         queue = r.outcome == _DrainOutcome.acked
             ? await _rebaseSiblings(_withoutUnit(queue, unit), r.rebases)
             : await _queue.all();
       }
     } finally {
       _draining = false;
+      _drainInFlight = null;
     }
+    if (_disposed) return;
     await _signalWaitersIfDrained();
   }
 
@@ -106,7 +129,7 @@ class SyncController {
   /// draining, offline, or empty. Returns true if a unit was acked or its error
   /// was handled (conflict paused/overwritten/dropped).
   Future<bool> drainOnce() async {
-    if (_draining) return false;
+    if (_draining || _disposed) return false;
     _draining = true;
     try {
       final all = await _queue.all();
@@ -116,7 +139,7 @@ class SyncController {
       if (r.outcome == _DrainOutcome.acked) {
         await _rebaseSiblings(_withoutUnit(all, unit), r.rebases);
       }
-      return r.outcome != _DrainOutcome.offline;
+      return r.outcome != _DrainOutcome.halted;
     } finally {
       _draining = false;
     }
@@ -134,11 +157,20 @@ class SyncController {
     try {
       result = await _transport.request(frame);
     } on UnavailableException {
-      return (outcome: _DrainOutcome.offline, rebases: const <String, String>{});
+      return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
+    } on UnauthenticatedException catch (e) {
+      // Not a verdict on this write — we simply are not authenticated right now,
+      // and every following unit would fail identically. Keep the whole queue
+      // intact and stop, exactly as if we were offline. The next reconnect (or
+      // an explicit `WincheDatabase.reconnect()` after a token refresh) resumes
+      // the drain from here.
+      _emitAuthStall(unit, e);
+      return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
     } on WincheException catch (e) {
       await _handleError(unit, key, e);
       return (outcome: _DrainOutcome.mutated, rebases: const <String, String>{});
     }
+    _authStalled = false;
 
     final writeResults = result['writeResults'] as List<Object?>? ?? const [];
     final rebases = <String, String>{};
@@ -246,6 +278,13 @@ class SyncController {
     'NOT_FOUND',
   };
 
+  /// Reports the queue as stalled on authentication, once per stall.
+  void _emitAuthStall(List<PendingWrite> unit, UnauthenticatedException e) {
+    if (_authStalled) return;
+    _authStalled = true;
+    _emit(SyncPaused(paths: [for (final p in unit) p.path], error: e));
+  }
+
   Future<void> _handleError(
       List<PendingWrite> unit, String key, WincheException e) async {
     if (_conflictStatuses.contains(e.status)) {
@@ -255,12 +294,19 @@ class SyncController {
       for (final p in unit) {
         await _queue.remove(p.seq);
       }
-      _emit(WriteFailed(
-        paths: [for (final p in unit) p.path],
-        error: e,
-        batchId: unit.first.batchId,
-      ));
+      _emitFailed(unit, e);
     }
+  }
+
+  /// Drops [unit] from the caller's bookkeeping and reports it, carrying the
+  /// entries themselves so the app can recover work the queue no longer holds.
+  void _emitFailed(List<PendingWrite> unit, WincheException e) {
+    _emit(WriteFailed(
+      paths: [for (final p in unit) p.path],
+      error: e,
+      writes: List.unmodifiable(unit),
+      batchId: unit.first.batchId,
+    ));
   }
 
   Future<void> _onConflict(
@@ -276,11 +322,7 @@ class SyncController {
         for (final p in unit) {
           await _queue.remove(p.seq);
         }
-        _emit(WriteFailed(
-          paths: [for (final p in unit) p.path],
-          error: e,
-          batchId: unit.first.batchId,
-        ));
+        _emitFailed(unit, e);
         return;
       }
       _autoResolveAttempts[seq] = attempts;
@@ -436,7 +478,18 @@ class SyncController {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     await _reconnectSub?.cancel();
+    // Let an in-flight drain unwind (it breaks out at its next loop check)
+    // before the caller closes the store underneath it. The timeout is a
+    // backstop only: callers close the transport first, which fails the request
+    // a drain could be blocked on. A straggling drain past it is harmless — the
+    // store's own closed-guard absorbs it.
+    try {
+      await _drainInFlight?.timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // A drain failure (or timeout) during teardown is not actionable.
+    }
     for (final c in _pendingWaiters) {
       if (!c.isCompleted) c.complete();
     }

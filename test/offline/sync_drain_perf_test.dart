@@ -80,7 +80,10 @@ class _OkTransport implements Transport {
   @override
   ConnectionState get connectionState => ConnectionState.ready;
   @override
-  void dispose() {}
+  Future<void> reconnect() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 /// A transport whose request handler is supplied per-test.
@@ -102,7 +105,10 @@ class _CallbackTransport implements Transport {
   @override
   ConnectionState get connectionState => ConnectionState.ready;
   @override
-  void dispose() {}
+  Future<void> reconnect() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 void main() {

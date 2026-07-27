@@ -76,6 +76,7 @@ abstract class _LiveFeed {
   String get _subscriptionKey;
 
   void _persistResumeToken() {
+    if (_disposed || _db.isClosed) return;
     _db.resumeTokens.set(_subscriptionKey, _resumeToken).ignore();
   }
 
@@ -107,6 +108,13 @@ abstract class _LiveFeed {
     if (!_out.isClosed) _out.add(const _FeedUpdate(currentOnly: true));
   }
 
+  /// Clears the permanent-failure latch so the next reconnect resubscribes.
+  ///
+  /// A `PERMISSION_DENIED` / `UNAUTHENTICATED` subscribe is permanent *for the
+  /// credentials that produced it* — after [WincheDatabase.reconnect] re-dials
+  /// with a refreshed token, it is worth another attempt.
+  void _clearPermanentFailure() => _permanent = false;
+
   void start() {
     _reconnectSub = _db.reconnects.listen((_) => _resubscribe(fresh: false));
     _stateSub = _db.connectionStates.listen((s) {
@@ -128,11 +136,14 @@ abstract class _LiveFeed {
     await _subscribe(resumeToken: _resumeToken);
   }
 
-  Future<void> dispose() async {
+  /// Tears the feed down. [sendUnlisten] is false when the socket itself is
+  /// going away (database close) — the server drops the subscription with the
+  /// connection, so the frame would only race a closing transport.
+  Future<void> dispose({bool sendUnlisten = true}) async {
     _disposed = true;
     await _reconnectSub?.cancel();
     await _stateSub?.cancel();
-    await _teardown(sendUnlisten: true);
+    await _teardown(sendUnlisten: sendUnlisten);
     if (!_out.isClosed) await _out.close();
   }
 

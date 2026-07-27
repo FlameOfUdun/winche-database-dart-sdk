@@ -63,7 +63,7 @@ class ReconnectHarness {
       channel.clientFrames.where((f) => f['type'] != 'hello').toList();
 
   Future<void> close() async {
-    db.close();
+    await db.close();
     await pump();
   }
 }

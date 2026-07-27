@@ -49,6 +49,10 @@ final class WsTransport implements Transport {
   /// reconnects itself in place (PROTOCOL §7); we never close+recreate it here
   /// — doing so previously orphaned listener streams during the reconnect window.
   Future<ProtocolConnection> _ensureConnected() {
+    if (_disposed) {
+      return Future.error(
+          const UnavailableException('Transport has been disposed.'));
+    }
     final c = _connection;
     if (c != null && c.currentState != ConnectionState.closed) {
       return Future.value(c);
@@ -80,12 +84,41 @@ final class WsTransport implements Transport {
       _connection?.currentState ?? ConnectionState.connecting;
 
   @override
-  void dispose() {
-    unawaited(Future(() async {
-      await _stateForward?.cancel();
-      await _connection?.close();
-      _connection = null;
-      if (!_states.isClosed) await _states.close();
-    }));
+  Future<void> reconnect() async {
+    if (_disposed) {
+      throw const UnavailableException('Transport has been disposed.');
+    }
+    final existing = _connection;
+    if (existing == null || existing.currentState == ConnectionState.closed) {
+      // Never dialled yet (or the last dial failed): connecting IS the
+      // reconnect, and it reads the current token anyway.
+      await _ensureConnected();
+      return;
+    }
+    await existing.reconnect();
+  }
+
+  /// Set before the connection is torn down so no caller can re-dial a fresh
+  /// socket through [_ensureConnected] after disposal.
+  bool _disposed = false;
+  Future<void>? _disposal;
+
+  @override
+  Future<void> dispose() => _disposal ??= _dispose();
+
+  Future<void> _dispose() async {
+    _disposed = true;
+    // Let an in-flight dial finish before closing it, so we never leak a socket
+    // that was opened while dispose() was running.
+    try {
+      await _connectFuture;
+    } catch (_) {
+      // A failed dial has nothing to close.
+    }
+    await _stateForward?.cancel();
+    await _connection?.close();
+    _connection = null;
+    _connectFuture = null;
+    if (!_states.isClosed) await _states.close();
   }
 }
