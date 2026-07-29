@@ -115,9 +115,10 @@ final class WincheDatabase extends WincheDatabaseService {
     _config = value;
   }
 
-  final _connectionRelay = StatusRelay<ConnectionState>();
-  final _syncRelay = StatusRelay<SyncEvent>();
-  final _reconnectRelay = StatusRelay<void>();
+  final _connectionRelay =
+      StatusRelay<ConnectionState>(ConnectionState.disconnected);
+  final _syncRelay = EventRelay<SyncEvent>();
+  final _reconnectRelay = EventRelay<void>();
 
   @override
   Future<void> onSessionChanged(WincheSession? session) async {

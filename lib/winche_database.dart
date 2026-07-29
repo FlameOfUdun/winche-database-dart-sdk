@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:meta/meta.dart';
 import 'package:winche_core/winche_core.dart';
 
+import 'src/facade/event_relay.dart';
 import 'src/facade/status_relay.dart';
 import 'src/offline/active_targets.dart';
 import 'src/offline/caching_read_coordinator.dart';
