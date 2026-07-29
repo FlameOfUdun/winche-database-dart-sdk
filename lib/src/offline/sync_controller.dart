@@ -101,6 +101,10 @@ class SyncController {
   /// conflict behavior.
   Future<void> drain() {
     if (_draining || _disposed) return Future<void>.value();
+    // A batch is partway into the queue. Acting now would send an incomplete
+    // unit and split an atomic commit. The coordinator drains once the batch is
+    // durable, so skipping here loses nothing.
+    if (_queue.isMutating) return Future<void>.value();
     return _drainInFlight = _drain();
   }
 
@@ -138,7 +142,7 @@ class SyncController {
   /// draining, offline, or empty. Returns true if a unit was acked or its error
   /// was handled (conflict paused/overwritten/dropped).
   Future<bool> drainOnce() async {
-    if (_draining || _disposed) return false;
+    if (_draining || _disposed || _queue.isMutating) return false;
     _draining = true;
     try {
       final all = await _queue.all();

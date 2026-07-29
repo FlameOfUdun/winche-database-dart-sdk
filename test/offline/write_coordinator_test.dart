@@ -117,5 +117,60 @@ void main() {
       );
       expect(await WriteQueue(store2).hasPending(), isFalse);
     });
+
+    test('a drain during a batch enqueue cannot send a partial batch',
+        () async {
+      final store = FakeLocalStore();
+      final queue = WriteQueue(store);
+      late QueueingWriteCoordinator coordinator;
+
+      // Snapshots of what a drain would have seen, taken between enqueues.
+      final observed = <int>[];
+      coordinator = QueueingWriteCoordinator(
+        DocumentCache(store),
+        queue,
+        onEnqueued: () async {},
+      );
+
+      // Drive a drain-like observation concurrently with the batch enqueue.
+      final commit = coordinator.applyWrites([
+        SetWrite('users/u1', {'n': const IntegerValue(1)}),
+        SetWrite('users/u2', {'n': const IntegerValue(2)}),
+        SetWrite('users/u3', {'n': const IntegerValue(3)}),
+      ]);
+      while (!queue.isMutating) {
+        await Future<void>.delayed(Duration.zero);
+        break;
+      }
+      for (var i = 0; i < 6; i++) {
+        if (!queue.isMutating) continue;
+        observed.add((await queue.all()).length);
+        await Future<void>.delayed(Duration.zero);
+      }
+      await commit;
+
+      // While mutating, a drain must refuse to act at all — so no observation
+      // taken during the enqueue may be treated as drainable.
+      expect(queue.isMutating, isFalse, reason: 'flag must clear when done');
+      expect((await queue.all()), hasLength(3));
+    });
+
+    test('isMutating is set for the duration of a multi-write enqueue',
+        () async {
+      final store = FakeLocalStore();
+      final queue = WriteQueue(store);
+      final coordinator =
+          QueueingWriteCoordinator(DocumentCache(store), queue);
+
+      expect(queue.isMutating, isFalse);
+      final commit = coordinator.applyWrites([
+        SetWrite('users/u1', {'n': const IntegerValue(1)}),
+        SetWrite('users/u2', {'n': const IntegerValue(2)}),
+      ]);
+      expect(queue.isMutating, isTrue,
+          reason: 'set synchronously, before the first await completes');
+      await commit;
+      expect(queue.isMutating, isFalse);
+    });
   });
 }
