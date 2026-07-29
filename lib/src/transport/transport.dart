@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../core/value_relay.dart';
 import '../protocol/connection.dart';
 import '../protocol/exceptions.dart';
 import '../protocol/messages.dart';
