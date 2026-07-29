@@ -12,9 +12,10 @@ part of '../../winche_database.dart';
 /// written through ([_storeServerDocs]), and how an effective snapshot is built
 /// and emitted ([_emit]).
 abstract class _LiveListener<TSnapshot> {
-  _LiveListener(this._db);
+  _LiveListener(this._db) : _session = _db._session!;
 
-  final WincheDatabase _db;
+  final WincheDatabase _db;              // still needed: _db.doc(...) builds references
+  final _DatabaseSession _session;       // everything else comes from here
 
   StreamController<TSnapshot>? _controller;
   _LiveFeed? _feed;
@@ -51,7 +52,7 @@ abstract class _LiveListener<TSnapshot> {
   /// the database has been closed. Every emission path funnels through here so
   /// no store read can outlive [WincheDatabase.close].
   Future<void> _emit() async {
-    if (_cancelled || _db.isClosed) return;
+    if (_cancelled || _session.isDisposed) return;
     await _emitNow();
   }
 
@@ -65,20 +66,20 @@ abstract class _LiveListener<TSnapshot> {
   }
 
   Future<void> _onListen() async {
-    if (_db.isClosed) {
+    if (_session.isDisposed) {
       await _controller?.close();
       _controller = null;
       return;
     }
     // Registered so close() can tear this listener down before the store goes.
-    _db._registerListener(this);
+    _session._registerListener(this);
 
     // Cache-first emission so the consumer gets an immediate snapshot.
     await _emit();
     if (_cancelled) return;
 
     // React to local cache/queue mutations (latency compensation).
-    _changeSub = _db.localChanges.stream.listen((_) => _emit());
+    _changeSub = _session.changes.stream.listen((_) => _emit());
     if (_cancelled) {
       await _changeSub?.cancel();
       _changeSub = null;
@@ -102,7 +103,7 @@ abstract class _LiveListener<TSnapshot> {
 
   Future<void> _onCancel() async {
     _cancelled = true;
-    _db._unregisterListener(this);
+    _session._unregisterListener(this);
     _releaseReferences();
     await _feedSub?.cancel();
     _feedSub = null;
@@ -138,7 +139,7 @@ abstract class _LiveListener<TSnapshot> {
   }
 
   Future<void> _onServerDocs(_FeedUpdate? update) async {
-    if (_cancelled || _db.isClosed) return;
+    if (_cancelled || _session.isDisposed) return;
     if (update == null) {
       // Feed down: fall back to cache/last-known.
       _serverActive = false;
@@ -158,7 +159,7 @@ abstract class _LiveListener<TSnapshot> {
       // emitting (transparent) so they can't resurface offline before the fresh
       // snapshot arrives.
       for (final p in update.deletedPaths) {
-        await _db.cache
+        await _session.cache
             .putConfirmedDeleted(p, formatMetaTimestamp(DateTime.now()));
       }
       return;
@@ -195,21 +196,21 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
   Future<void> _storeServerDocs(_FeedUpdate update) async {
     _serverDocs = update.docs;
     final paths = [for (final d in update.docs) d.path];
-    await _db.targets.setMembers(_spec, paths);
-    _db.activeTargets.pin(this, paths);
+    await _session.targets.setMembers(_spec, paths);
+    _session.activeTargets.pin(this, paths);
     // Write-through so the offline fallback + one-shot reads stay warm (one
     // eviction pass for the whole batch).
-    await _db.cache.putConfirmedAll(update.docs);
+    await _session.cache.putConfirmedAll(update.docs);
     // Tombstone documents the server reported deleted so they cannot reappear
     // from the cache (offline fallback, one-shot reads, a new listener).
     for (final path in update.deletedPaths) {
-      await _db.cache
+      await _session.cache
           .putConfirmedDeleted(path, formatMetaTimestamp(DateTime.now()));
     }
   }
 
   @override
-  void _releaseReferences() => _db.activeTargets.unpin(this);
+  void _releaseReferences() => _session.activeTargets.unpin(this);
 
   @override
   Future<void> _emitNow() async {
@@ -267,22 +268,22 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
   /// or stale-but-locally-matching documents.
   Future<List<WireDocument>> _baseDocs() async {
     if (_serverDocs != null) return _serverDocs!;
-    final members = await _db.targets.members(_spec);
+    final members = await _session.targets.members(_spec);
     if (members != null) return _resolveMembers(members);
-    return _db.cache.confirmedInCollection(_spec.collection);
+    return _session.cache.confirmedInCollection(_spec.collection);
   }
 
   Future<List<WireDocument>> _resolveMembers(List<String> paths) async {
     final docs = <WireDocument>[];
     for (final p in paths) {
-      final doc = await _db.cache.confirmed(p);
+      final doc = await _session.cache.confirmed(p);
       if (doc != null) docs.add(doc);
     }
     return docs;
   }
 
   Future<Map<String, List<PendingWrite>>> _pendingByPath() =>
-      _db.queue.byPathInCollection(_spec.collection);
+      _session.queue.byPathInCollection(_spec.collection);
 
   /// Ordered-list diff by path + updateTimeRaw (added/modified/removed change set).
   static List<DocumentChange<T>> _diff<T>(
@@ -351,19 +352,19 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
   Future<void> _storeServerDocs(_FeedUpdate update) async {
     _serverDoc = update.docs.isEmpty ? null : update.docs.first;
     if (_serverDoc != null) {
-      _db.activeTargets.pin(this, [_path]);
-      await _db.cache.putConfirmed(_serverDoc!);
+      _session.activeTargets.pin(this, [_path]);
+      await _session.cache.putConfirmed(_serverDoc!);
     } else {
-      _db.activeTargets.unpin(this);
+      _session.activeTargets.unpin(this);
       if (update.deletedPaths.contains(_path)) {
-        await _db.cache
+        await _session.cache
             .putConfirmedDeleted(_path, formatMetaTimestamp(DateTime.now()));
       }
     }
   }
 
   @override
-  void _releaseReferences() => _db.activeTargets.unpin(this);
+  void _releaseReferences() => _session.activeTargets.unpin(this);
 
   @override
   Future<void> _emitNow() async {
@@ -374,8 +375,8 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
     // cache; fall back to the cache rather than emitting a false "missing".
     final base = (_serverActive && _serverDoc != null)
         ? _serverDoc
-        : await _db.cache.confirmed(_path);
-    final pending = await _db.queue.forPath(_path);
+        : await _session.cache.confirmed(_path);
+    final pending = await _session.queue.forPath(_path);
     final eff = applyOverlay(base, pending);
     final metadata = SnapshotMetadata(
       fromCache: !_serverActive,

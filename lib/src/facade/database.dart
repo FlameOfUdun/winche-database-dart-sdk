@@ -397,9 +397,4 @@ final class WincheDatabase {
   /// Whether [close] has been called. Live listeners consult this before every
   /// emission so a teardown can never drive a read of a closed store.
   bool get isClosed => _session!.isDisposed;
-
-  void _registerListener(_LiveListener<Object?> l) =>
-      _session!._registerListener(l);
-  void _unregisterListener(_LiveListener<Object?> l) =>
-      _session!._unregisterListener(l);
 }
