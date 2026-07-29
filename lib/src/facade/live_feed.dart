@@ -34,9 +34,10 @@ class _FeedUpdate {
 /// per-type frame handling ([_handleFrame], publishing via [_publish]).
 /// Consumed by the matching [_LiveListener].
 abstract class _LiveFeed {
-  _LiveFeed(this._db);
+  _LiveFeed(this._db, this._session);
 
   final WincheDatabase _db;
+  final _DatabaseSession _session;
 
   final StreamController<_FeedUpdate?> _out =
       StreamController<_FeedUpdate?>.broadcast();
@@ -76,8 +77,8 @@ abstract class _LiveFeed {
   String get _subscriptionKey;
 
   void _persistResumeToken() {
-    if (_disposed || _db.isClosed) return;
-    _db.resumeTokens.set(_subscriptionKey, _resumeToken).ignore();
+    if (_disposed || _session.isDisposed) return;
+    _session.resumeTokens.set(_subscriptionKey, _resumeToken).ignore();
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -132,7 +133,7 @@ abstract class _LiveFeed {
     // uses a still-null _resumeToken and the server sends a full snapshot (never
     // wrong data); the _disposed / `_frames != null` guards in _subscribe prevent
     // a double-subscribe.
-    _resumeToken = await _db.resumeTokens.get(_subscriptionKey);
+    _resumeToken = await _session.resumeTokens.get(_subscriptionKey);
     await _subscribe(resumeToken: _resumeToken);
   }
 
@@ -152,11 +153,11 @@ abstract class _LiveFeed {
     if (_frames != null) return; // already subscribed
     try {
       final result =
-          await _db._transport.request(_subscribeFrame(resumeToken));
+          await _session.transport.request(_subscribeFrame(resumeToken));
       if (_disposed) return;
       final subId = result['subscriptionId'] as String;
       _subscriptionId = subId;
-      _frames = _db
+      _frames = _session.transport
           .listenEvents(subId)
           .listen(_onFrame, onError: (_) => _goDown(), onDone: _goDown);
     } on WincheException catch (e) {
@@ -188,9 +189,9 @@ abstract class _LiveFeed {
       if (sendUnlisten) {
         // Fire-and-forget: never wait for the ack so teardown can't hang when
         // the server is unreachable or slow to respond.
-        _db._transport.request(unlistenFrame('', subId)).ignore();
+        _session.transport.request(unlistenFrame('', subId)).ignore();
       }
-      _db.releaseSubscription(subId);
+      _session.transport.releaseSubscription(subId);
     }
   }
 
@@ -207,7 +208,7 @@ abstract class _LiveFeed {
 /// server order, applying snapshots and deltas (with index math and a
 /// count-mismatch checksum that triggers a fresh resubscribe).
 final class _QueryFeed extends _LiveFeed {
-  _QueryFeed(super._db, this._spec);
+  _QueryFeed(super._db, super._session, this._spec);
 
   final QuerySpec _spec;
 
@@ -288,7 +289,7 @@ final class _QueryFeed extends _LiveFeed {
 /// (or clears it on removal); no ordering, index math, or count-mismatch
 /// resubscription is needed.
 final class _DocumentFeed extends _LiveFeed {
-  _DocumentFeed(super._db, this._path);
+  _DocumentFeed(super._db, super._session, this._path);
 
   final String _path;
 

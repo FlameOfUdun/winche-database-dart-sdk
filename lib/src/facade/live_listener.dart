@@ -190,7 +190,7 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
   bool _first = true;
 
   @override
-  _LiveFeed _createFeed() => _QueryFeed(_db, _spec);
+  _LiveFeed _createFeed() => _QueryFeed(_db, _session, _spec);
 
   @override
   Future<void> _storeServerDocs(_FeedUpdate update) async {
@@ -346,7 +346,7 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
   WireDocument? _serverDoc;
 
   @override
-  _LiveFeed _createFeed() => _DocumentFeed(_db, _path);
+  _LiveFeed _createFeed() => _DocumentFeed(_db, _session, _path);
 
   @override
   Future<void> _storeServerDocs(_FeedUpdate update) async {
