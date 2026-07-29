@@ -22,12 +22,15 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:winche_core/testing.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
 const _defaultWs = 'ws://localhost:5183/documents/ws';
 const uid = 'user-123';
 
 late final WincheDatabase db;
+late final ScriptedAuthService auth;
 final runId = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
 
 int _pass = 0;
@@ -129,7 +132,14 @@ Future<String> _await(String? Function() probe,
 Future<void> main(List<String> args) async {
   final wsUrl = args.isNotEmpty ? args.first : _defaultWs;
 
-  db = WincheDatabase(WincheDatabaseConfig(uri: Uri.parse(wsUrl), inMemory: true));
+  // winche_database has no sign-in surface of its own; the sample server
+  // hard-codes uid = "user-123" and ignores the token, so a ScriptedAuthService
+  // stands in for a real auth backend.
+  Winche.initializeApp(options: WincheOptions(databaseEndpoint: Uri.parse(wsUrl)));
+  db = WincheDatabase.instance..config = const WincheDatabaseConfig(inMemory: true);
+  auth = ScriptedAuthService(Winche.app);
+  auth.announce(WincheIdentity(uid));
+  await Winche.app.settled;
   _initSync();
 
   print('Winche SDK feature smoke test');
@@ -544,5 +554,5 @@ Future<void> main(List<String> args) async {
 
 Future<void> _shutdown() async {
   await _evSub.cancel();
-  db.close();
+  await Winche.deinitializeApp();
 }

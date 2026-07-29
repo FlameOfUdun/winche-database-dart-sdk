@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter/material.dart' as material show ConnectionState;
+import 'package:winche_core/testing.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
 // Hardcoded connection / identity — the sample server hard-codes uid = "user-123"
@@ -10,7 +12,17 @@ const kUri = 'ws://localhost:5183/documents/ws';
 const kUid = 'user-123';
 const kCollection = 'userData/$kUid/records';
 
-void main() => runApp(const WincheDemoApp());
+void main() {
+  // winche_database has no sign-in surface of its own; some WincheAuthService
+  // must be registered with the app and announce an identity before the
+  // database is usable. This demo has no real backend to authenticate
+  // against (the sample server hard-codes uid = "user-123" and ignores the
+  // token), so it scripts the sign-in itself — see _HomePageState._auth.
+  Winche.initializeApp(
+    options: WincheOptions(databaseEndpoint: Uri.parse(kUri)),
+  );
+  runApp(const WincheDemoApp());
+}
 
 class WincheDemoApp extends StatelessWidget {
   const WincheDemoApp({super.key});
@@ -82,13 +94,16 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late final _db = WincheDatabase(
-    WincheDatabaseConfig(
-      uri: Uri.parse(kUri),
+  // A scripted auth service standing in for a real backend — see the note in
+  // `main()`. Only ever touched (and so only ever registered with the app)
+  // when this page actually signs in.
+  late final _auth = ScriptedAuthService(Winche.app);
+
+  late final _db = WincheDatabase.instance
+    ..config = WincheDatabaseConfig(
       autoReconnect: widget.autoConnect,
       inMemory: true,
-    ),
-  );
+    );
 
   StreamSubscription<SyncEvent>? _syncSub;
   StreamSubscription<ConnectionState>? _connSub;
@@ -121,21 +136,34 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     if (widget.autoConnect) {
       _connect();
-    } else {
-      _connecting = false;
     }
+    // Disabled in widget tests (autoConnect: false): nobody ever signs in, so
+    // `_connecting` stays true forever and the spinner shows instead of the
+    // record list — which is what keeps `.snapshots()` from ever being called
+    // against an unbound database (see WincheUnboundException in the README).
   }
 
   @override
   void dispose() {
     _syncSub?.cancel();
     _connSub?.cancel();
-    unawaited(_db.close()); // State.dispose is sync; close settles in background
+    // State.dispose is sync; signing out settles the session teardown (socket,
+    // store, sync controller) in the background. Only touch `_auth` if we
+    // actually signed in with it, so a never-connected widget test doesn't
+    // register an auth service just to sign out of nothing.
+    if (widget.autoConnect) _auth.announce(null);
     super.dispose();
   }
 
   Future<void> _connect() async {
-    _syncSub = _db.syncEvents.listen((event) {
+    // Force `_db` into existence (registering it with the app) before
+    // announcing sign-in, so the very first session dispatch already
+    // includes it — see the ordering note in the README on lazy factories.
+    final db = _db;
+    _auth.announce(WincheIdentity(kUid));
+    await Winche.app.settled;
+
+    _syncSub = db.syncEvents.listen((event) {
       _refreshPending();
       if (event is WriteFailed) {
         _snack('Write failed: ${event.error.status} — ${event.error.message}');
@@ -145,14 +173,16 @@ class _HomePageState extends State<HomePage> {
         );
         event.discard();
       } else if (event is SyncPaused) {
-        // Nothing was dropped — the token is dead. A real app refreshes it and
-        // calls `_db.reconnect()`; this sample has a hardcoded token.
+        // Nothing was dropped — the token is dead. A real app would refresh
+        // the token in its auth service and announce the rotation there; core
+        // re-dials automatically and the drain resumes on its own. This
+        // sample has a hardcoded scripted token, so nothing to refresh.
         _snack('Sync paused (unauthenticated): ${event.error.message}');
       }
     });
 
-    _connState = _db.connectionState;
-    _connSub = _db.connectionStates.listen((s) {
+    _connState = db.connectionState;
+    _connSub = db.connectionStates.listen((s) {
       if (mounted) setState(() => _connState = s);
     });
     if (mounted) setState(() => _connecting = false);

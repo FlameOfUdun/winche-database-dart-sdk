@@ -1,5 +1,63 @@
 # Changelog
 
+## 6.0.0
+
+**Breaking: this release discards every existing local store.** The on-disk layout moved from
+`<root>/winche_<namespace>.db` to `<root>/winche/<storageKey>/`, and no migration is performed. On
+first launch under 6.0 every user starts from an empty cache and **any writes that had not yet synced
+are lost**. Drain pending writes before upgrading if that matters to you.
+
+### Changed
+
+- **Breaking: `winche_database` is now built on `winche_core`.** `WincheDatabase` is a
+  `WincheDatabaseService` — construct it once via `Winche.initializeApp(...)` and then
+  `WincheDatabase.instance` (or `instanceFor(app)`), not `WincheDatabase(config)`. Core owns the
+  session lifecycle: it builds a session for whichever identity is currently signed in (announced by
+  a `WincheAuthService`, e.g. a real auth package, or `ScriptedAuthService` from
+  `package:winche_core/testing.dart`) and disposes it on sign-out or when the identity changes.
+  `winche_database` itself has no sign-in surface and never sees a token directly — it reads one from
+  the session on every (re)dial.
+- **Breaking: `WincheDatabaseConfig` keeps only tuning**, set via
+  `WincheDatabase.instance.config = ...` immediately after obtaining the instance (it now **throws a
+  `StateError` once the database has been used** — opened its store or dialled its socket — because
+  construction is lazy and that window is what makes "immediately after `.instance`" reliable). The
+  surviving fields are unchanged: `pingInterval`, `autoReconnect`, `maxBackoff`, `maxFrameBytes`,
+  `inMemory`, `conflictPolicy`, `maxCachedDocuments`, `cacheSizeBytes`. Four fields left, each replaced
+  by something on the core side:
+  - `uri` → `WincheOptions.databaseEndpoint`, passed once to `Winche.initializeApp`.
+  - `tokenProvider` → gone; the session's token is read from whichever `WincheAuthService` is
+    registered with the app.
+  - `namespaceResolver` → gone; the store is scoped by the signed-in identity itself, not a value you
+    supply — see the on-disk layout change above.
+  - `directoryResolver` → `WincheOptions.directoryResolver`, also passed once to
+    `Winche.initializeApp` and shared by every Winche service under that app.
+- **Breaking: `WincheDatabase.close()`, `isClosed` and `reconnect()` are gone.** There is nothing left
+  to call them on: the session backing the facade is owned entirely by core, torn down automatically
+  on sign-out and rebuilt automatically on sign-in or a user switch, and re-dialled automatically when
+  the auth service reports a token rotation. Token rotation is now a nudge (the existing session
+  re-dials in place), not a rebuild — so it no longer tears down and reopens the local store the way an
+  explicit `reconnect()` implied.
+- **Breaking: calling the database while no identity is signed in now throws `WincheUnboundException`**
+  instead of running against an unscoped/default store. It fires from every member that actually
+  touches the session — `.get()`, `.set()`, `.update()`, `.delete()`, `.commit()`, `runTransaction`,
+  `waitForPendingWrites`, and so on. **Nuance:** `doc()` and `batch()` are lazy factories — building a
+  reference or a batch is synchronous local bookkeeping, so they never throw; the exception surfaces on
+  the first call that actually needs the session. `WincheUnboundException` is deliberately not a
+  `WincheException` (it never crosses the wire), so `on WincheException` does not catch it — gate on
+  sign-in state instead of handling it as a server error. **Known gap:** `.snapshots()` does not yet
+  follow this rule — calling it while unbound throws a raw `TypeError` (null-check failure) rather than
+  `WincheUnboundException`, because `_LiveListener`'s constructor force-unwraps the session. Gate
+  `.snapshots()` on sign-in state yourself until this is fixed.
+- **Breaking: a user switch now completes every `snapshots()` stream** (`onDone`), because a listener
+  is displaying one identity's data and must not silently start showing the next identity's documents.
+  The app is expected to resubscribe — in practice this falls out of the same rebuild that already
+  reacts to a sign-in state change. `connectionStates`, `syncEvents` and `reconnects` describe the
+  connection rather than any one identity's data, so they **survive** a user switch instead: they go
+  quiet (`connectionStates` emits `ConnectionState.disconnected`) rather than ending.
+- The `inMemory` × `namespaceResolver` validation from 5.0 (rejecting a persistent store configured
+  without a namespace, and rejecting a namespace supplied alongside `inMemory: true`) is gone because
+  it is no longer expressible — there is no `namespaceResolver` left to validate against `inMemory`.
+
 ## 5.0.0
 
 ### Added

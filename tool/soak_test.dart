@@ -18,6 +18,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:winche_core/testing.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
 const uid = 'user-123';
@@ -39,12 +41,23 @@ Future<void> main(List<String> args) async {
   const batches = 15;
   const opsPerBatch = 8; // concurrent ops per batch
 
-  final db = WincheDatabase(WincheDatabaseConfig(
-    uri: Uri.parse(wsUrl),
-    directoryResolver: () async => dir,
-    conflictPolicy: ConflictPolicy.clientWins, // auto-resolve so the queue never stalls
-    cacheSizeBytes: 16 * 1024, // small cap → eviction fires under churn
-  ));
+  // winche_database has no sign-in surface of its own; the sample server
+  // hard-codes uid = "user-123" and ignores the token, so a ScriptedAuthService
+  // stands in for a real auth backend.
+  Winche.initializeApp(
+    options: WincheOptions(
+      databaseEndpoint: Uri.parse(wsUrl),
+      directoryResolver: () async => dir,
+    ),
+  );
+  final db = WincheDatabase.instance
+    ..config = const WincheDatabaseConfig(
+      conflictPolicy: ConflictPolicy.clientWins, // auto-resolve so the queue never stalls
+      cacheSizeBytes: 16 * 1024, // small cap → eviction fires under churn
+    );
+  final auth = ScriptedAuthService(Winche.app);
+  auth.announce(WincheIdentity(uid));
+  await Winche.app.settled;
 
   final errors = <String>[];
   void capture(String where, Object e) => errors.add('$where: $e');
@@ -210,7 +223,7 @@ Future<void> main(List<String> args) async {
     for (final s in querySubs) s.cancel(),
     for (final s in docSubs) s.cancel(),
   ]);
-  db.close();
+  await Winche.deinitializeApp();
 
   stdout.writeln('dir=$dir  present=${present.length} deleted=${deleted.length} '
       'queryListeners=$queryListeners docListeners=$docListeners ops=$ops');

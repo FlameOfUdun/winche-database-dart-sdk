@@ -281,7 +281,7 @@ packages:
     source: hosted
     version: "3.0.3"
   winche_core:
-    dependency: transitive
+    dependency: "direct main"
     description:
       path: "../../winche_core"
       relative: true
@@ -293,7 +293,7 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "5.0.0"
+    version: "6.0.0"
 sdks:
   dart: ">=3.10.7 <4.0.0"
   flutter: ">=3.18.0-18.0.pre.54"
