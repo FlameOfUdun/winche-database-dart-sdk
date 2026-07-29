@@ -103,6 +103,25 @@ void main() {
     expect(relay.value, equals(2));
   });
 
+  // Without this, every subscriber outlives the relay holding an open
+  // Stream.multi controller, and a disposed facade can never release its
+  // listeners. Distinct from "a failed dial must not end the stream" — a failed
+  // dial never calls close(), so forwarding done here cannot end a stream that
+  // should stay open.
+  test('close completes subscribers so they can release', () async {
+    final relay = ValueRelay<int>(1);
+
+    var done = false;
+    final sub = relay.stream.listen((_) {}, onDone: () => done = true);
+    await Future<void>.delayed(Duration.zero);
+
+    await relay.close();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(done, isTrue);
+    await sub.cancel();
+  });
+
   test('add after close is a no-op rather than a StateError', () async {
     final relay = ValueRelay<int>(1);
     await relay.close();

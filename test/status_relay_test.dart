@@ -87,15 +87,23 @@ void main() {
     expect(done, isFalse);
   });
 
-  test('close does not signal done', () async {
-    // ValueRelay deliberately never forwards done to its subscribers (see
-    // WsTransport's "connectionStates does NOT complete" test) so a listener
-    // can never be orphaned by an upstream ending. StatusRelay.close() simply
-    // stops the relay from accepting further values; it does not complete the
-    // stream.
+  // Three different "does it end?" questions live in this file, and conflating
+  // them hides a leak:
+  //
+  //   - an attached SOURCE ending    → must NOT end the relay (a session was
+  //                                    disposed; the consumer outlives it)
+  //   - a failed dial upstream       → must NOT end the relay (see
+  //                                    WsTransport's "does NOT complete" test)
+  //   - the relay's own close()      → MUST end it, or every subscriber
+  //                                    outlives the relay holding an open
+  //                                    controller
+  //
+  // This test pins the third. The first is pinned by the test directly above.
+  test('close ends the stream, releasing subscribers', () async {
     await relay.close();
     await Future<void>.delayed(Duration.zero);
-    expect(done, isFalse);
+    expect(done, isTrue,
+        reason: 'close is end-of-life; subscribers must be able to release');
   });
 
   test('is broadcast — several widgets can watch one status', () async {

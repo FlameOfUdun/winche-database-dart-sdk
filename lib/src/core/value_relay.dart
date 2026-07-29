@@ -37,15 +37,22 @@ final class ValueRelay<T> {
   /// De-duplication is load-bearing for consumers that react to a transition
   /// by rebuilding state: a repeated `ready` must not be mistaken for a new
   /// one.
+  /// Note the `onDone`: [close] is this relay's end of life, and forwarding it
+  /// is what lets subscribers release. Without it every subscriber outlives the
+  /// relay holding an open controller. This is *not* in tension with a level
+  /// signal that must survive a failed connection — a failed dial never closes
+  /// the relay, so nothing here can end a stream that should stay open.
   Stream<T> get stream => Stream<T>.multi((controller) {
         controller.add(_value);
         final sub = _out.stream.listen(
           controller.add,
           onError: controller.addError,
+          onDone: controller.close,
         );
         controller.onCancel = sub.cancel;
       }, isBroadcast: true).distinct();
 
-  /// Ends the stream. Later [add] calls are silently ignored.
+  /// Ends the stream, completing every subscriber. Later [add] calls are
+  /// silently ignored.
   Future<void> close() => _out.close();
 }
