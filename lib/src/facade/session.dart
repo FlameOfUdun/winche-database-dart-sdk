@@ -48,6 +48,16 @@ class _DatabaseSession {
         // surface as an unhandled async error from an already-acked local write.
       }));
     });
+
+    // Dial as soon as a session exists, rather than waiting for a read, a
+    // listener, or a queued write. The SDK already behaved this way, but only as
+    // a side effect of subscribing to the `reconnects` async* getter; making it
+    // explicit is what lets that getter be deleted.
+    //
+    // Fire-and-forget on purpose: the auto-reconnect loop owns recovery, so a
+    // failure here has no caller to report to. Swallowed so it cannot surface as
+    // an unhandled async error during construction.
+    unawaited(transport.reconnect().catchError((Object _) {}));
   }
 
   final Transport transport;
