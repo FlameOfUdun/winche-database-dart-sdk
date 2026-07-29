@@ -112,7 +112,7 @@ abstract class _LiveFeed {
   /// Clears the permanent-failure latch so the next reconnect resubscribes.
   ///
   /// A `PERMISSION_DENIED` / `UNAUTHENTICATED` subscribe is permanent *for the
-  /// credentials that produced it* — after [WincheDatabase.reconnect] re-dials
+  /// credentials that produced it* — after a token rotation re-dials
   /// with a refreshed token, it is worth another attempt.
   void _clearPermanentFailure() => _permanent = false;
 

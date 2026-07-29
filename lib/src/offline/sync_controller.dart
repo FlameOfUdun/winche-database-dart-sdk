@@ -162,7 +162,7 @@ class SyncController {
       // Not a verdict on this write — we simply are not authenticated right now,
       // and every following unit would fail identically. Keep the whole queue
       // intact and stop, exactly as if we were offline. The next reconnect (or
-      // an explicit `WincheDatabase.reconnect()` after a token refresh) resumes
+      // core's onTokenChanged after a token rotation) resumes
       // the drain from here.
       _emitAuthStall(unit, e);
       return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});

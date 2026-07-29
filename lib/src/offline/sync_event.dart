@@ -103,7 +103,7 @@ final class WriteFailed extends SyncEvent {
 ///
 /// Unlike [WriteFailed] nothing is dropped: an auth failure says nothing about
 /// the write itself, so the unit stays queued exactly where it was. Refresh the
-/// token behind `tokenProvider` and call `WincheDatabase.reconnect()` to resume
+/// signed-in session; core re-dials on the next token rotation to resume
 /// draining.
 final class SyncPaused extends SyncEvent {
   const SyncPaused({required this.paths, required this.error});
