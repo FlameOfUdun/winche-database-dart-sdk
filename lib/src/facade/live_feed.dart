@@ -46,7 +46,6 @@ abstract class _LiveFeed {
   int? _resumeToken;
   String? _subscriptionId;
   StreamSubscription<ServerFrame>? _frames;
-  StreamSubscription<void>? _reconnectSub;
   StreamSubscription<ConnectionState>? _stateSub;
   bool _disposed = false;
   bool _permanent = false;
@@ -117,24 +116,34 @@ abstract class _LiveFeed {
   void _clearPermanentFailure() => _permanent = false;
 
   void start() {
-    _reconnectSub = _db.reconnects.listen((_) => _resubscribe(fresh: false));
+    // One level signal drives both directions. `ready` covers the initial
+    // subscribe as well as every resubscribe, because connectionStates hands
+    // this subscription the current state instead of only future transitions —
+    // so there is no separate "first time" path to keep in step.
     _stateSub = _db.connectionStates.listen((s) {
-      if (s == ConnectionState.disconnected ||
-          s == ConnectionState.reconnecting ||
-          s == ConnectionState.closed) {
-        _goDown();
+      switch (s) {
+        case ConnectionState.ready:
+          unawaited(_onConnectionReady());
+        case ConnectionState.disconnected:
+        case ConnectionState.reconnecting:
+        case ConnectionState.closed:
+          _goDown();
+        case ConnectionState.connecting:
+          break; // dialling; nothing was up to take down
       }
     });
-    _subscribeWithStoredToken();
   }
 
-  Future<void> _subscribeWithStoredToken() async {
-    // Benign race: if a reconnect fires before this load resolves, _resubscribe
-    // uses a still-null _resumeToken and the server sends a full snapshot (never
-    // wrong data); the _disposed / `_frames != null` guards in _subscribe prevent
-    // a double-subscribe.
-    _resumeToken = await _session.resumeTokens.get(_subscriptionKey);
-    await _subscribe(resumeToken: _resumeToken);
+  /// (Re)subscribes now that a socket is up.
+  ///
+  /// Benign race: if a second `ready` arrives before this load resolves,
+  /// `_subscribe`'s `_frames != null` guard prevents a double-subscribe.
+  Future<void> _onConnectionReady() async {
+    // Load the persisted token only if we have never had one. On a reconnect the
+    // in-memory token is fresher than the stored one, so re-reading would move
+    // the resume point backwards.
+    _resumeToken ??= await _session.resumeTokens.get(_subscriptionKey);
+    await _resubscribe(fresh: false);
   }
 
   /// Tears the feed down. [sendUnlisten] is false when the socket itself is
@@ -142,7 +151,6 @@ abstract class _LiveFeed {
   /// connection, so the frame would only race a closing transport.
   Future<void> dispose({bool sendUnlisten = true}) async {
     _disposed = true;
-    await _reconnectSub?.cancel();
     await _stateSub?.cancel();
     await _teardown(sendUnlisten: sendUnlisten);
     if (!_out.isClosed) await _out.close();
