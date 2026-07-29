@@ -100,6 +100,10 @@ void _initSync() {
         }
         // Resolve so the queue keeps draining and we don't hang.
         e.discard();
+      case SyncPaused():
+        // The drain stalled on auth. Nothing to record: no write reached the
+        // server, so no outcome changed.
+        break;
     }
   });
 }

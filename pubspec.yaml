@@ -12,9 +12,17 @@ topics:
   - nosql
 
 environment:
-  sdk: ^3.5.0
+  # Raised from ^3.5.0: winche_core requires ^3.10.0, and a path dependency
+  # is not version-solved, so without this the package would claim support for
+  # SDKs it cannot build on.
+  sdk: ^3.10.0
 
 dependencies:
+  # Path dependency until winche_core is published. Suppressed rather than
+  # setting `publish_to: none`, which would misstate the intent -- this package
+  # is still meant for pub.dev, it just cannot be published until core is.
+  winche_core:
+    path: ../winche_core
   web_socket_channel: ^3.0.0
   sembast: ^3.8.6
   sembast_web: ^2.4.4+1

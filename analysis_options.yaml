@@ -1,6 +1,12 @@
 include: package:lints/recommended.yaml
 
 analyzer:
+  errors:
+    # winche_core is not on pub.dev yet, so it has to be a path dependency.
+    # Suppressed rather than setting `publish_to: none`, which would misstate
+    # the intent — this package is still meant for pub.dev, it just cannot be
+    # published until core is. Remove this line the moment core ships.
+    invalid_dependency: ignore
   language:
     strict-casts: true
     strict-inference: true

@@ -280,6 +280,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.3"
+  winche_core:
+    dependency: transitive
+    description:
+      path: "../../winche_core"
+      relative: true
+    source: path
+    version: "0.1.0"
   winche_database:
     dependency: "direct main"
     description:
