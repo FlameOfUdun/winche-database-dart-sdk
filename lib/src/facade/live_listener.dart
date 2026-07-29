@@ -12,7 +12,10 @@ part of '../../winche_database.dart';
 /// written through ([_storeServerDocs]), and how an effective snapshot is built
 /// and emitted ([_emit]).
 abstract class _LiveListener<TSnapshot> {
-  _LiveListener(this._db) : _session = _db._session!;
+  // `_require()`, not `_session!`: creating a listener while signed out must
+  // report WincheUnboundException like every other use, not a raw
+  // "Null check operator used on a null value" from deep inside the SDK.
+  _LiveListener(this._db) : _session = _db._require();
 
   final WincheDatabase _db;              // still needed: _db.doc(...) builds references
   final _DatabaseSession _session;       // everything else comes from here
@@ -43,14 +46,14 @@ abstract class _LiveListener<TSnapshot> {
   void _releaseReferences() {}
 
   /// Clears a permanent subscribe failure so the next reconnect tries again.
-  /// Driven by [WincheDatabase.reconnect] when the auth token changes.
+  /// Driven by [WincheDatabase.onTokenChanged] when the auth token rotates.
   void _clearPermanentFailure() => _feed?._clearPermanentFailure();
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   /// Emits the current effective snapshot, unless this listener is cancelled or
-  /// the database has been closed. Every emission path funnels through here so
-  /// no store read can outlive [WincheDatabase.close].
+  /// its session has been disposed. Every emission path funnels through here so
+  /// no store read can outlive the session that owns the store.
   Future<void> _emit() async {
     if (_cancelled || _session.isDisposed) return;
     await _emitNow();
@@ -71,7 +74,8 @@ abstract class _LiveListener<TSnapshot> {
       _controller = null;
       return;
     }
-    // Registered so close() can tear this listener down before the store goes.
+    // Registered so session teardown can shut this listener down before the
+    // store goes.
     _session._registerListener(this);
 
     // Cache-first emission so the consumer gets an immediate snapshot.
@@ -115,8 +119,8 @@ abstract class _LiveListener<TSnapshot> {
     _controller = null;
   }
 
-  /// Tears this listener down from [WincheDatabase.close] — before the transport
-  /// and the local store go away. Detaches from the feed first so a socket
+  /// Tears this listener down from session disposal — before the transport and
+  /// the local store go away. Detaches from the feed first so a socket
   /// teardown can no longer drive an emission, then completes the consumer's
   /// stream with `done`.
   ///
@@ -134,7 +138,7 @@ abstract class _LiveListener<TSnapshot> {
     final controller = _controller;
     _controller = null;
     // Not awaited: a controller with no subscriber never completes its close
-    // future, which would hang close().
+    // future, which would hang session teardown.
     if (controller != null && !controller.isClosed) unawaited(controller.close());
   }
 

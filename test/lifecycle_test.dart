@@ -52,6 +52,19 @@ void main() {
         db.batch().commit(),
         throwsA(isA<WincheUnboundException>()),
       );
+
+      // snapshots() builds a listener eagerly, so unlike doc()/batch() it
+      // throws at call time. It must still be the documented exception: this
+      // used to surface as a raw "Null check operator used on a null value"
+      // from inside the SDK, which tells an app author nothing.
+      expect(
+        () => db.doc('a/b').snapshots(),
+        throwsA(isA<WincheUnboundException>()),
+      );
+      expect(
+        () => db.collection('a').snapshots(),
+        throwsA(isA<WincheUnboundException>()),
+      );
     });
 
     test('binds on sign-in, unbinds on sign-out', () async {
