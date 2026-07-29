@@ -85,6 +85,11 @@ final class WincheDatabase extends WincheDatabaseService {
 
   _DatabaseSession? _session;
 
+  /// The current session, or null when unbound. For tests and the core
+  /// contract suite only.
+  @visibleForTesting
+  Object? get debugSession => _session;
+
   /// Whether [_require] has been called since the current session (or lack of
   /// one) was established — i.e. whether this facade has actually been used.
   bool _started = false;
