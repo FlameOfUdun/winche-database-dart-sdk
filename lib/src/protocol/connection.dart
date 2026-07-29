@@ -171,22 +171,29 @@ class ProtocolConnection {
     });
   }
 
-  /// Dials the server and waits for the welcome frame.
+  /// Dials and completes the handshake.
   ///
-  /// Authentication is performed at the WebSocket upgrade level via the
-  /// `?access_token=` query parameter — no in-band hello message is sent.
-  ///
-  /// [welcomeTimeout] caps how long to wait for the welcome frame; defaults to
-  /// 15 seconds. Throws [UnavailableException] if the timeout elapses.
-  /// Throws [UnauthenticatedException] if the server returns close code 4401.
-  /// Throws [WincheException] if the server sends an error frame before welcome.
-  /// Throws [UnavailableException] if the connection closes before welcome or
-  /// if the channel factory throws a transport-level exception (e.g. on a
-  /// refused connection).
+  /// Rethrows the failure to its caller — `request()` depends on that to surface
+  /// [UnavailableException] — *and* hands recovery to the auto-reconnect loop, so
+  /// a connection that starts while the network is down is not dead forever. The
+  /// two are not in conflict: the caller learns this attempt failed, while the
+  /// loop keeps working in the background.
   Future<void> connect({
     Duration welcomeTimeout = const Duration(seconds: 15),
   }) async {
     _setState(ConnectionState.connecting);
+    try {
+      await _initialDial(welcomeTimeout);
+    } catch (_) {
+      if (_state != ConnectionState.closed) unawaited(_reconnectLoop());
+      rethrow;
+    }
+    _setState(ConnectionState.ready);
+    _startPing();
+  }
+
+  /// The first dial + handshake. Leaves state transitions to [connect].
+  Future<void> _initialDial(Duration welcomeTimeout) async {
     try {
       _channel = await _channelFactory(await _dialUri());
     } catch (e) {
@@ -218,8 +225,6 @@ class ProtocolConnection {
       _sub?.cancel();
       rethrow;
     }
-    _setState(ConnectionState.ready);
-    _startPing();
   }
 
   /// Sends a client frame and waits for the server's response or error.
@@ -398,6 +403,7 @@ class ProtocolConnection {
   /// Sends a graceful close.
   Future<void> close() async {
     _setState(ConnectionState.closed);
+    if (!_closed.isCompleted) _closed.complete();
     _pingTimer?.cancel();
     // 1. Fail all pending requests FIRST so callers aren't stuck waiting
     //    for a sink close that may block on a dead network.
@@ -563,7 +569,12 @@ class ProtocolConnection {
                 .toInt()
                 .abs();
         final delay = Duration(milliseconds: capped + jitterMs);
-        await _sleeper(delay);
+        // Race the backoff against close(), so teardown is not stuck waiting out
+        // a delay of up to maxBackoff (30s by default).
+        await Future.any<void>([
+          Future<void>.value(_sleeper(delay)),
+          _closed.future,
+        ]);
         if (_state != ConnectionState.reconnecting) return;
       }
       attempt++;
@@ -608,6 +619,10 @@ class ProtocolConnection {
   }
 
   int _jitterSeed = 0;
+
+  /// Completed by [close] so a pending backoff wait gives up immediately
+  /// instead of running to term.
+  final Completer<void> _closed = Completer<void>();
 
   void _failAllPending(String reason) {
     final ex = UnavailableException(reason);
