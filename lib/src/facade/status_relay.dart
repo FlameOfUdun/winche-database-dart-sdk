@@ -38,6 +38,13 @@ final class StatusRelay<T> {
   }
 
   /// Ends the stream. Call only when the facade is disposed.
+  ///
+  /// **Cancel before close, in that order.** [attach] forwards with a bare
+  /// `_out.add` and no `isClosed` guard, so an event arriving after `_out`
+  /// shuts would throw `StateError` from inside a listener callback, where
+  /// nothing catches it. Cancelling first detaches the subscription
+  /// synchronously, which is what makes that unguarded forward safe. Reversing
+  /// these two lines reopens the race.
   Future<void> close() async {
     await _in?.cancel();
     _in = null;
