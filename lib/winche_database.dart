@@ -64,6 +64,7 @@ part 'src/facade/geo_point.dart';
 part 'src/facade/live_feed.dart';
 part 'src/facade/live_listener.dart';
 part 'src/facade/references.dart';
+part 'src/facade/session.dart';
 part 'src/facade/snapshots.dart';
 part 'src/facade/transaction.dart';
 part 'src/facade/write_batch.dart';

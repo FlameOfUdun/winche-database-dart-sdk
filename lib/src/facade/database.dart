@@ -185,85 +185,45 @@ final class WincheDatabase {
     ConflictPolicy conflictPolicy, {
     int? maxCachedDocuments,
     int? cacheSizeBytes,
-  })  : _transport = WsTransport(config),
-        _store = store {
-    _activeTargets = ActiveTargets();
-    final eviction = (maxCachedDocuments == null && cacheSizeBytes == null)
-        ? null
-        : EvictionManager(
-            maxDocuments: maxCachedDocuments, maxBytes: cacheSizeBytes);
-    _cache = DocumentCache(_store, eviction: eviction);
-    _queue = WriteQueue(_store);
-    _targets = TargetCache(_store);
-    _resumeTokens = ResumeTokenStore(_store);
-    if (eviction != null) {
-      eviction
-        ..pinnedPaths = (() async => {
-              ..._activeTargets.all(),
-              for (final p in await _queue.all()) p.path,
-            }) // parens required: otherwise the cascade binds to the Set literal
-        ..removeDocument = _store.removeDocument;
-    }
-    _changes = LocalChangeNotifier();
-    _sync = SyncController(_transport, _cache, _queue,
-        conflictPolicy: conflictPolicy, changeNotifier: _changes)
-      ..start();
-    _reads = CachingReadCoordinator(_transport, _cache, _queue, targets: _targets);
-    _writes = QueueingWriteCoordinator(_cache, _queue,
-        maxFrameBytes: config.maxFrameBytes, onEnqueued: () async {
-      _changes.notify();
-      // Local-first: the write is durably queued and the local view already
-      // reflects it, so hand control back now. Awaiting the drain here would
-      // make every set/update/delete block on a server round-trip, which is
-      // exactly what the optimistic acknowledgement is meant to avoid.
-      unawaited(_sync.notifyEnqueued().catchError((Object _) {
-        // Drain outcomes are reported on `syncEvents`; a failure there must not
-        // surface as an unhandled async error from an already-acked local write.
-      }));
-    });
-  }
+  }) : _session = _DatabaseSession(config, store, conflictPolicy,
+            maxCachedDocuments: maxCachedDocuments,
+            cacheSizeBytes: cacheSizeBytes);
 
-  final Transport _transport;
-  final LocalStore _store;
-  late final ReadCoordinator _reads;
-  late final WriteCoordinator _writes;
-  late final WriteQueue _queue;
-  late final SyncController _sync;
-  late final DocumentCache _cache;
-  late final TargetCache _targets;
-  late final ResumeTokenStore _resumeTokens;
-  late final ActiveTargets _activeTargets;
-  late final LocalChangeNotifier _changes;
+  _DatabaseSession? _session;
+
+  /// Internal: the transport, for other facade parts (transactions, live
+  /// feeds) that need to issue requests directly.
+  Transport get _transport => _session!.transport;
 
   /// Internal: the document cache (used by the facade live listeners).
-  DocumentCache get cache => _cache;
+  DocumentCache get cache => _session!.cache;
 
   /// Internal: the per-query membership cache (used by listeners + read coordinator).
-  TargetCache get targets => _targets;
+  TargetCache get targets => _session!.targets;
 
   /// Internal: durable per-subscription resume tokens (used by live feeds).
-  ResumeTokenStore get resumeTokens => _resumeTokens;
+  ResumeTokenStore get resumeTokens => _session!.resumeTokens;
 
   /// Internal: the active-subscription reference registry (pins docs against eviction).
-  ActiveTargets get activeTargets => _activeTargets;
+  ActiveTargets get activeTargets => _session!.activeTargets;
 
   /// Internal: the write queue.
-  WriteQueue get queue => _queue;
+  WriteQueue get queue => _session!.queue;
 
   /// Internal: the local-change signal that fires on cache/queue mutations.
-  LocalChangeNotifier get localChanges => _changes;
+  LocalChangeNotifier get localChanges => _session!.changes;
 
   /// The read coordinator (always cache-aware).
-  ReadCoordinator get reads => _reads;
+  ReadCoordinator get reads => _session!.reads;
 
   /// The write coordinator (always queueing + syncing).
-  WriteCoordinator get writes => _writes;
+  WriteCoordinator get writes => _session!.writes;
 
   /// Stream of sync progress/conflict events as the write queue drains.
-  Stream<SyncEvent> get syncEvents => _sync.events;
+  Stream<SyncEvent> get syncEvents => _session!.sync.events;
 
   /// Whether there are un-synced local writes.
-  Future<bool> get hasPendingWrites => _queue.hasPending();
+  Future<bool> get hasPendingWrites => _session!.queue.hasPending();
 
   /// Completes when the pending-write queue has drained.
   ///
@@ -272,26 +232,27 @@ final class WincheDatabase {
   /// the conflict is resolved via the [WriteConflict] event on [syncEvents]
   /// (`retry`/`discard`/`overwrite`). Use [ConflictPolicy.clientWins] or
   /// [ConflictPolicy.serverWins] to auto-resolve conflicts instead.
-  Future<void> waitForPendingWrites() => _sync.waitForPendingWrites();
+  Future<void> waitForPendingWrites() => _session!.sync.waitForPendingWrites();
 
   /// Wipes the local cache and pending-write queue.
-  Future<void> clearPersistence() => _store.clear();
+  Future<void> clearPersistence() => _session!.store.clear();
 
   Stream<ServerFrame> listenEvents(String subscriptionId) {
-    return _transport.listenEvents(subscriptionId);
+    return _session!.transport.listenEvents(subscriptionId);
   }
 
   void releaseSubscription(String subscriptionId) {
-    _transport.releaseSubscription(subscriptionId);
+    _session!.transport.releaseSubscription(subscriptionId);
   }
 
-  Stream<void> get reconnects => _transport.reconnects;
+  Stream<void> get reconnects => _session!.transport.reconnects;
 
   /// Stable stream of connection-state transitions (survives reconnects).
-  Stream<ConnectionState> get connectionStates => _transport.connectionStates;
+  Stream<ConnectionState> get connectionStates =>
+      _session!.transport.connectionStates;
 
   /// The current connection state.
-  ConnectionState get connectionState => _transport.connectionState;
+  ConnectionState get connectionState => _session!.transport.connectionState;
 
   /// Returns a [CollectionReference] for [path].
   CollectionReference<Map<String, Object?>> collection(String path) {
@@ -312,7 +273,7 @@ final class WincheDatabase {
   ]) async {
     if (refs.isEmpty) return <DocumentSnapshot<T>>[];
     final results =
-        await _reads.getAll([for (final r in refs) r.path], options);
+        await reads.getAll([for (final r in refs) r.path], options);
     return [
       for (var i = 0; i < refs.length; i++) _snapshotFrom(refs[i], results[i]),
     ];
@@ -408,12 +369,12 @@ final class WincheDatabase {
   /// means a new local store: `await db.close()`, then a new [WincheDatabase]
   /// with the new [WincheDatabaseConfig.namespace].
   Future<void> reconnect() async {
-    if (_closed) {
+    if (isClosed) {
       throw StateError('WincheDatabase has been closed.');
     }
     // Clear the latches before re-dialling, so the `reconnects` event that the
     // successful dial emits finds every feed willing to resubscribe.
-    for (final l in _listeners) {
+    for (final l in _session!.listeners) {
       l._clearPermanentFailure();
     }
     await _transport.reconnect();
@@ -429,47 +390,16 @@ final class WincheDatabase {
   /// Await it before re-opening a database over the same on-disk file (e.g. when
   /// switching users): the returned future completes only once the store is
   /// actually closed. Idempotent.
-  Future<void> close() => _closing ??= _close();
+  Future<void> close() => _closing ??= _session!.dispose();
 
   Future<void>? _closing;
-  bool _closed = false;
 
   /// Whether [close] has been called. Live listeners consult this before every
   /// emission so a teardown can never drive a read of a closed store.
-  bool get isClosed => _closed;
+  bool get isClosed => _session!.isDisposed;
 
-  Future<void> _close() async {
-    // Set first: every listener emission and feed callback is gated on it, so
-    // anything triggered by the teardown below becomes a no-op.
-    _closed = true;
-
-    // 1. Live listeners — detach from their feeds and complete consumer streams
-    //    while the store is still open.
-    final listeners = List<_LiveListener<Object?>>.of(_listeners);
-    _listeners.clear();
-    for (final l in listeners) {
-      await l._shutdown();
-    }
-
-    // 2. Transport — awaited, so no subscription frame can still arrive. This
-    //    comes before the sync controller on purpose: closing the connection
-    //    fails every in-flight request, which is what lets a drain blocked on a
-    //    write response unwind (step 3 waits for it).
-    await _transport.dispose();
-
-    // 3. Sync controller (waits out an in-flight drain) and the local-change
-    //    signal.
-    await _sync.dispose();
-    await _changes.dispose();
-
-    // 4. Store last: nothing above can touch it any more.
-    await _store.close();
-  }
-
-  /// Live listeners currently attached, so [close] can tear them down before the
-  /// store goes away.
-  final Set<_LiveListener<Object?>> _listeners = {};
-
-  void _registerListener(_LiveListener<Object?> l) => _listeners.add(l);
-  void _unregisterListener(_LiveListener<Object?> l) => _listeners.remove(l);
+  void _registerListener(_LiveListener<Object?> l) =>
+      _session!._registerListener(l);
+  void _unregisterListener(_LiveListener<Object?> l) =>
+      _session!._unregisterListener(l);
 }
