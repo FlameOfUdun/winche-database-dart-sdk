@@ -116,14 +116,10 @@ final class WincheDatabase extends WincheDatabaseService {
 
   @override
   Future<void> onSessionChanged(WincheSession? session) async {
-    _connectionRelay.detach(finalValue: ConnectionState.disconnected);
-    _syncRelay.detach();
-    _reconnectRelay.detach();
-
-    await _session?.dispose();
-    _session = null;
-    _started = false;
-    if (session == null) return;
+    if (session == null) {
+      await _clearSession()?.dispose();
+      return;
+    }
 
     final endpoint = app.options?.databaseEndpoint;
     if (endpoint == null) {
@@ -132,7 +128,7 @@ final class WincheDatabase extends WincheDatabaseService {
       );
     }
 
-    _session = _DatabaseSession(
+    await _bind(
       ConnectionConfig(
         uri: endpoint,
         tokenProvider: () async {
@@ -154,10 +150,75 @@ final class WincheDatabase extends WincheDatabaseService {
       maxCachedDocuments: _config.maxCachedDocuments,
       cacheSizeBytes: _config.cacheSizeBytes,
     );
+  }
+
+  /// Detaches the three [StatusRelay]s and clears [_session] (and [_started]),
+  /// returning whatever session was outgoing so the caller can dispose it.
+  ///
+  /// Synchronous and side-effect-only up to that return — no `await`, so
+  /// callers that have nothing to dispose (a fresh facade) never suspend.
+  _DatabaseSession? _clearSession() {
+    _connectionRelay.detach(finalValue: ConnectionState.disconnected);
+    _syncRelay.detach();
+    _reconnectRelay.detach();
+    final previous = _session;
+    _session = null;
+    _started = false;
+    return previous;
+  }
+
+  /// Tears down the current session (awaiting its disposal, if any existed)
+  /// and binds a new one over [config]/[store], attaching the three
+  /// [StatusRelay]s. Shared by [onSessionChanged] (real sessions, store
+  /// derived from the signed-in identity) and [debugBindStore] (tests: an
+  /// explicitly supplied store and transport) — one copy of the relay wiring,
+  /// not two.
+  Future<void> _bind(
+    ConnectionConfig config,
+    LocalStore store,
+    ConflictPolicy conflictPolicy, {
+    int? maxCachedDocuments,
+    int? cacheSizeBytes,
+  }) async {
+    final previous = _clearSession();
+    if (previous != null) await previous.dispose();
+
+    _session = _DatabaseSession(
+      config,
+      store,
+      conflictPolicy,
+      maxCachedDocuments: maxCachedDocuments,
+      cacheSizeBytes: cacheSizeBytes,
+    );
 
     _connectionRelay.attach(_session!.transport.connectionStates);
     _syncRelay.attach(_session!.sync.events);
     _reconnectRelay.attach(_session!.transport.reconnects);
+  }
+
+  /// Binds a session over an explicitly supplied [store], bypassing the store
+  /// that would be derived from the signed-in identity.
+  ///
+  /// For tests that drive a fake transport and a fake store directly. Production
+  /// code binds through [onSessionChanged].
+  @visibleForTesting
+  void debugBindStore(
+    ConnectionConfig config,
+    LocalStore store, {
+    ConflictPolicy conflictPolicy = ConflictPolicy.manual,
+    int? maxCachedDocuments,
+    int? cacheSizeBytes,
+  }) {
+    // Only ever called on a freshly-constructed facade (no prior session), so
+    // `_bind`'s `await previous.dispose()` branch never runs and this
+    // completes synchronously despite `_bind`'s `Future`-returning signature.
+    unawaited(_bind(
+      config,
+      store,
+      conflictPolicy,
+      maxCachedDocuments: maxCachedDocuments,
+      cacheSizeBytes: cacheSizeBytes,
+    ));
   }
 
   @override

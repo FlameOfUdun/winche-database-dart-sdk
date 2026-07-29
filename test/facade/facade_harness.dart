@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
 import '../protocol/fake_channel.dart';
@@ -29,25 +30,29 @@ class FacadeHarness {
       int? maxCachedDocuments,
       int? cacheSizeBytes})
       : channel = FakeChannel()..startCapture() {
-    db = WincheDatabase.withStore(
-      ConnectionConfig(
-        uri: Uri.parse('ws://fake/documents/ws'),
-        channelFactory: (_) {
-          // The backend sends `welcome` immediately on upgrade — there is no
-          // `hello` and no in-band auth. Emit it on every (re)dial. Deferred to
-          // a microtask so it lands after connect() has subscribed and armed
-          // its welcome completer.
-          scheduleMicrotask(() => channel
-              .serverSend({'type': 'welcome', 'connectionId': 'test-conn'}));
-          return channel;
-        },
-        pingInterval: const Duration(hours: 1), // disable keepalive pings
-        autoReconnect: autoReconnect,
-      ),
-      store ?? MemoryLocalStore(), // null → default in-memory store (offline is always on)
-      maxCachedDocuments: maxCachedDocuments,
-      cacheSizeBytes: cacheSizeBytes,
-    );
+    // No auth service is registered on this app: `debugBindStore` binds a
+    // session directly over the fake transport/store below, bypassing
+    // identity entirely.
+    db = WincheDatabase(WincheApp('facade-harness'))
+      ..debugBindStore(
+        ConnectionConfig(
+          uri: Uri.parse('ws://fake/documents/ws'),
+          channelFactory: (_) {
+            // The backend sends `welcome` immediately on upgrade — there is no
+            // `hello` and no in-band auth. Emit it on every (re)dial. Deferred to
+            // a microtask so it lands after connect() has subscribed and armed
+            // its welcome completer.
+            scheduleMicrotask(() => channel
+                .serverSend({'type': 'welcome', 'connectionId': 'test-conn'}));
+            return channel;
+          },
+          pingInterval: const Duration(hours: 1), // disable keepalive pings
+          autoReconnect: autoReconnect,
+        ),
+        store ?? MemoryLocalStore(), // null → default in-memory store (offline is always on)
+        maxCachedDocuments: maxCachedDocuments,
+        cacheSizeBytes: cacheSizeBytes,
+      );
     channel.onClientFrame = _route;
   }
 
@@ -123,7 +128,7 @@ class FacadeHarness {
   }
 
   Future<void> close() async {
-    await db.close();
+    await db.dispose();
     await pump();
   }
 }

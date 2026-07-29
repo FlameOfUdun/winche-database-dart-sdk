@@ -1,19 +1,21 @@
 import 'dart:async';
 import 'package:test/test.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 import '../offline/fake_local_store.dart';
 
 void main() {
   late WincheDatabase db;
   setUp(() {
-    db = WincheDatabase.withStore(
-      ConnectionConfig(
-          uri: Uri.parse('ws://localhost:1/documents/ws'),
-          autoReconnect: false),
-      FakeLocalStore(),
-    );
+    db = WincheDatabase(WincheApp('offline-listener'))
+      ..debugBindStore(
+        ConnectionConfig(
+            uri: Uri.parse('ws://localhost:1/documents/ws'),
+            autoReconnect: false),
+        FakeLocalStore(),
+      );
   });
-  tearDown(() => db.close());
+  tearDown(() => db.dispose());
 
   test('query.snapshots emits cache-first and reacts to local writes',
       () async {

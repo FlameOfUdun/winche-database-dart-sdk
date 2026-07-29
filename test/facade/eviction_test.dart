@@ -1,4 +1,5 @@
 import 'package:test/test.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 import 'package:winche_database/src/protocol/messages.dart' show WireDocument;
 
@@ -10,14 +11,15 @@ import 'facade_harness.dart';
 /// [UnavailableException], which [SyncController.drain] treats as "offline –
 /// keep the queue" and returns immediately.
 WincheDatabase _offlineDb({required int maxCachedDocuments}) =>
-    WincheDatabase.withStore(
-      ConnectionConfig(
-        uri: Uri.parse('ws://localhost:1/documents/ws'),
-        autoReconnect: false,
-      ),
-      MemoryLocalStore(),
-      maxCachedDocuments: maxCachedDocuments,
-    );
+    WincheDatabase(WincheApp('eviction'))
+      ..debugBindStore(
+        ConnectionConfig(
+          uri: Uri.parse('ws://localhost:1/documents/ws'),
+          autoReconnect: false,
+        ),
+        MemoryLocalStore(),
+        maxCachedDocuments: maxCachedDocuments,
+      );
 
 void main() {
   test('a document with a pending write is pinned and survives eviction',
@@ -42,7 +44,7 @@ void main() {
     final drop2 = await db.cache.confirmed('c/drop2');
     expect(drop1 == null || drop2 == null, isTrue);
 
-    db.close();
+    await db.dispose();
   });
 
   test('an active listener pins its members; an unrelated doc is evicted',

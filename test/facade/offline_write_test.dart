@@ -1,4 +1,5 @@
 import 'package:test/test.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
 import '../offline/fake_local_store.dart';
@@ -22,12 +23,14 @@ void main() {
     await h.close();
   });
 
-  WincheDatabase offlineDb(LocalStore store) => WincheDatabase.withStore(
-        ConnectionConfig(
-            uri: Uri.parse('ws://localhost:1/documents/ws'),
-            autoReconnect: false),
-        store,
-      );
+  WincheDatabase offlineDb(LocalStore store) =>
+      WincheDatabase(WincheApp('offline-write'))
+        ..debugBindStore(
+          ConnectionConfig(
+              uri: Uri.parse('ws://localhost:1/documents/ws'),
+              autoReconnect: false),
+          store,
+        );
 
   test('offline set acks locally and is visible to get (hasPendingWrites)',
       () async {
@@ -40,7 +43,7 @@ void main() {
     expect(snap.exists, isTrue);
     expect(snap.data(), {'name': 'Alice'});
     expect(snap.metadata.hasPendingWrites, isTrue);
-    db.close();
+    db.dispose();
   });
 
   test('offline update then cache read reflects the change', () async {
@@ -50,7 +53,7 @@ void main() {
     final snap =
         await db.doc('users/u1').get(const GetOptions(source: Source.cache));
     expect(snap.data(), {'a': 9, 'b': 2});
-    db.close();
+    db.dispose();
   });
 
   test('offline batch commit enqueues all writes, visible via cache query',
@@ -65,6 +68,6 @@ void main() {
         .get(const GetOptions(source: Source.cache));
     expect(qs.docs.map((d) => d.id).toSet(), {'a', 'b'});
     expect(qs.metadata.hasPendingWrites, isTrue);
-    db.close();
+    db.dispose();
   });
 }

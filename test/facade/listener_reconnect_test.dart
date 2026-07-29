@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:test/test.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
 import '../protocol/fake_channel.dart';
@@ -15,19 +16,20 @@ import 'facade_harness.dart' show pump, wireDoc, wireFields;
 /// they arrived on.
 class ReconnectHarness {
   ReconnectHarness() {
-    db = WincheDatabase.withStore(
-      ConnectionConfig(
-        uri: Uri.parse('ws://fake/documents/ws'),
-        channelFactory: (_) => _dial(),
-        sleeper: (d) {
-          sleeps.add(d);
-          return Future<void>.value();
-        },
-        pingInterval: const Duration(hours: 1),
-        autoReconnect: true,
-      ),
-      MemoryLocalStore(),
-    );
+    db = WincheDatabase(WincheApp('listener-reconnect'))
+      ..debugBindStore(
+        ConnectionConfig(
+          uri: Uri.parse('ws://fake/documents/ws'),
+          channelFactory: (_) => _dial(),
+          sleeper: (d) {
+            sleeps.add(d);
+            return Future<void>.value();
+          },
+          pingInterval: const Duration(hours: 1),
+          autoReconnect: true,
+        ),
+        MemoryLocalStore(),
+      );
   }
 
   late final WincheDatabase db;
@@ -63,7 +65,7 @@ class ReconnectHarness {
       channel.clientFrames.where((f) => f['type'] != 'hello').toList();
 
   Future<void> close() async {
-    await db.close();
+    await db.dispose();
     await pump();
   }
 }
