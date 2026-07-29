@@ -78,6 +78,32 @@ class SyncController {
       onError: (_) {}, // connection errors are handled inside drain()
       cancelOnError: false,
     );
+    unawaited(_drainRestoredQueue());
+  }
+
+  /// Drains whatever the previous process left behind.
+  ///
+  /// A queue restored from disk has no trigger of its own: `notifyEnqueued`
+  /// already fired in the session that enqueued it, and the first successful
+  /// connect is not observable through [Transport.reconnects] — `WsTransport`
+  /// exposes it as an `async*` that awaits the connection before `yield*`-ing
+  /// its events, so the event fired as that very connection completes lands
+  /// before this subscription attaches, and the controller has no replay.
+  /// Without this kick such a queue sits pending forever behind a healthy
+  /// socket.
+  ///
+  /// Safe to run unconditionally: it no-ops on an empty queue, and while
+  /// offline the drain halts on the first `UnavailableException` and leaves
+  /// the queue intact, exactly as a reconnect-triggered drain would.
+  Future<void> _drainRestoredQueue() async {
+    try {
+      if (_disposed || !await _queue.hasPending()) return;
+      await drain();
+    } catch (_) {
+      // Best-effort: a store read that fails here must not surface as an
+      // unhandled async error at construction. The queue stays put and the
+      // next reconnect retries it.
+    }
   }
 
   /// Called by the write coordinator after a write is enqueued.

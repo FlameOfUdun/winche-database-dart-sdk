@@ -70,6 +70,33 @@ void main() {
     expect(await queue.hasPending(), isFalse);
   });
 
+  // A process restart: the writes were queued in a previous session and are
+  // already on disk when the controller starts. Nothing will fire `reconnects`
+  // for them — WsTransport exposes it as an `async*` that awaits the connection
+  // before `yield*`-ing its events, so the event fired as that first connection
+  // completes lands before the subscription attaches and is dropped (the
+  // controller has no replay). Without an explicit kick, such a queue sits
+  // pending forever behind a perfectly healthy socket.
+  test('a queue restored from disk drains at start, with no reconnect event',
+      () async {
+    final restored = FakeLocalStore();
+    final restoredQueue = WriteQueue(restored);
+    await restoredQueue.enqueue(
+        SetWrite('users/u1', {'n': const IntegerValue(1)}),
+        localCommitTime: DateTime.utc(2026));
+    expect(await restoredQueue.hasPending(), isTrue);
+
+    final restoredTransport = _FakeTransport();
+    final restoredSync =
+        SyncController(restoredTransport, DocumentCache(restored), restoredQueue)
+          ..start();
+    addTearDown(restoredSync.dispose);
+
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(await restoredQueue.hasPending(), isFalse,
+        reason: 'start() must drain a pre-existing queue on its own');
+  });
+
   test('notifyEnqueued drains when online', () async {
     await queue.enqueue(SetWrite('users/u1', {'n': const IntegerValue(1)}),
         localCommitTime: DateTime.utc(2026));
