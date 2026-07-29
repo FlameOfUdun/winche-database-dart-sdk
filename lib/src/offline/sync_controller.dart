@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../protocol/connection.dart';
 import '../protocol/exceptions.dart';
 import '../protocol/messages.dart';
 import '../core/paths.dart';
@@ -64,12 +65,20 @@ class SyncController {
   /// The in-flight [drain], so [dispose] can wait for it to unwind instead of
   /// letting it keep touching the store after the database is closed.
   Future<void>? _drainInFlight;
-  StreamSubscription<void>? _reconnectSub;
+  StreamSubscription<ConnectionState>? _stateSub;
 
-  /// Subscribes to reconnect events to drive draining; call once after wiring.
+  /// Starts draining whenever the transport reports a working connection; call
+  /// once after wiring.
+  ///
+  /// One rule covers every case that used to need its own mechanism: the first
+  /// connect, each reconnect, and a session binding onto an already-live socket.
+  /// That works because [Transport.connectionStates] is a level — it hands this
+  /// subscription the current state immediately and never completes — so there
+  /// is nothing to seed and no event that can be missed by subscribing late.
   void start() {
-    _reconnectSub = _transport.reconnects.listen(
-      (_) {
+    _stateSub = _transport.connectionStates.listen(
+      (state) {
+        if (state != ConnectionState.ready) return;
         // A fresh socket re-read `tokenProvider`, so a previous auth stall may
         // be over — let the queue try again and report a new stall if not.
         _authStalled = false;
@@ -78,32 +87,6 @@ class SyncController {
       onError: (_) {}, // connection errors are handled inside drain()
       cancelOnError: false,
     );
-    unawaited(_drainRestoredQueue());
-  }
-
-  /// Drains whatever the previous process left behind.
-  ///
-  /// A queue restored from disk has no trigger of its own: `notifyEnqueued`
-  /// already fired in the session that enqueued it, and the first successful
-  /// connect is not observable through [Transport.reconnects] — `WsTransport`
-  /// exposes it as an `async*` that awaits the connection before `yield*`-ing
-  /// its events, so the event fired as that very connection completes lands
-  /// before this subscription attaches, and the controller has no replay.
-  /// Without this kick such a queue sits pending forever behind a healthy
-  /// socket.
-  ///
-  /// Safe to run unconditionally: it no-ops on an empty queue, and while
-  /// offline the drain halts on the first `UnavailableException` and leaves
-  /// the queue intact, exactly as a reconnect-triggered drain would.
-  Future<void> _drainRestoredQueue() async {
-    try {
-      if (_disposed || !await _queue.hasPending()) return;
-      await drain();
-    } catch (_) {
-      // Best-effort: a store read that fails here must not surface as an
-      // unhandled async error at construction. The queue stays put and the
-      // next reconnect retries it.
-    }
   }
 
   /// Called by the write coordinator after a write is enqueued.
@@ -505,7 +488,7 @@ class SyncController {
 
   Future<void> dispose() async {
     _disposed = true;
-    await _reconnectSub?.cancel();
+    await _stateSub?.cancel();
     // Let an in-flight drain unwind (it breaks out at its next loop check)
     // before the caller closes the store underneath it. The timeout is a
     // backstop only: callers close the transport first, which fails the request
