@@ -12,13 +12,37 @@ part of '../../winche_database.dart';
 /// written through ([_storeServerDocs]), and how an effective snapshot is built
 /// and emitted ([_emit]).
 abstract class _LiveListener<TSnapshot> {
-  // `_require()`, not `_session!`: creating a listener while signed out must
-  // report WincheUnboundException like every other use, not a raw
-  // "Null check operator used on a null value" from deep inside the SDK.
-  _LiveListener(this._db) : _session = _db._require();
+  _LiveListener(this._db);
 
-  final WincheDatabase _db;              // still needed: _db.doc(...) builds references
-  final _DatabaseSession _session;       // everything else comes from here
+  final WincheDatabase _db; // still needed: _db.doc(...) builds references
+
+  /// The session this listener runs against, bound when it is first listened
+  /// to — deliberately not at construction.
+  ///
+  /// Binding eagerly made `snapshots()` throw [WincheUnboundException]
+  /// synchronously at its call site. For a `StreamBuilder` that call site is
+  /// `build()`, so a sign-out landing between a rebuild and the app clearing
+  /// its own state threw into the widget tree instead of surfacing an error the
+  /// consumer could render — a red screen rather than the `hasError` branch
+  /// every `StreamBuilder` already has.
+  ///
+  /// This is also what makes the failure consistent: every other operation is
+  /// `async`, so an unbound database rejects its Future. This was the one entry
+  /// point that threw, for the incidental reason that it resolved the session in
+  /// an initializer list.
+  _DatabaseSession? _boundSession;
+
+  /// The bound session.
+  ///
+  /// Non-null by construction of the call graph: every reader below is reachable
+  /// only after [_onListen] has bound one. Kept as a getter over a `!` at ~26
+  /// call sites so a mistake here names itself instead of surfacing as "Null
+  /// check operator used on a null value" from deep inside the SDK.
+  _DatabaseSession get _session =>
+      _boundSession ??
+      (throw StateError(
+        'live listener used before it was listened to — this is an SDK bug',
+      ));
 
   StreamController<TSnapshot>? _controller;
   _LiveFeed? _feed;
@@ -69,7 +93,31 @@ abstract class _LiveListener<TSnapshot> {
   }
 
   Future<void> _onListen() async {
-    if (_session.isDisposed) {
+    // Bind here rather than at construction, so a consumer subscribing while
+    // signed out receives a stream error it can render instead of an exception
+    // thrown into whatever called `snapshots()`.
+    final session = _db._session;
+    if (session == null) {
+      final controller = _controller;
+      _controller = null;
+      // Close is NOT awaited, for the same reason `_shutdown` does not await
+      // it: we are inside `onListen`, so the error queued above cannot be
+      // delivered until this callback returns. Awaiting the close future here
+      // waits on delivery that cannot happen yet, and the stream never
+      // completes — `done` is dropped and every later `cancel()` hangs.
+      if (controller != null) {
+        controller.addError(WincheUnboundException());
+        unawaited(controller.close());
+      }
+      return;
+    }
+    _boundSession = session;
+
+    // Distinct from the above on purpose: a session that has been *disposed*
+    // means the identity changed under a live listener, and completing with
+    // `done` is the documented signal for that. Never having had one is an
+    // error.
+    if (session.isDisposed) {
       await _controller?.close();
       _controller = null;
       return;
@@ -107,6 +155,14 @@ abstract class _LiveListener<TSnapshot> {
 
   Future<void> _onCancel() async {
     _cancelled = true;
+    // Subscribed while signed out: nothing was bound, so there is nothing
+    // registered, pinned or subscribed to tear down. Reading `_session` here
+    // would throw over an error the consumer has already been told about.
+    if (_boundSession == null) {
+      await _controller?.close();
+      _controller = null;
+      return;
+    }
     _session._unregisterListener(this);
     _releaseReferences();
     await _feedSub?.cancel();
