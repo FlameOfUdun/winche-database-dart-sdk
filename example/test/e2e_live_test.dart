@@ -65,8 +65,10 @@ void main() {
   testWidgets('example app end to end against a live server', (tester) async {
     await tester.runAsync(() async {
       if (!await serverIsUp()) {
-        print('SKIPPED: no server on $kUri — start the sample API first:');
-        print('  dotnet run --launch-profile http');
+        markTestSkipped(
+          'no server on $kUri — start the sample API first: '
+          'dotnet run --launch-profile http',
+        );
         return;
       }
       tester.view.physicalSize = const Size(1400, 2200);
