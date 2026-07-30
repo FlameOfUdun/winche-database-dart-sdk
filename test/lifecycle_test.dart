@@ -56,17 +56,28 @@ void main() {
         throwsA(isA<WincheUnboundException>()),
       );
 
-      // snapshots() builds a listener eagerly, so unlike doc()/batch() it
-      // throws at call time. It must still be the documented exception: this
-      // used to surface as a raw "Null check operator used on a null value"
-      // from inside the SDK, which tells an app author nothing.
-      expect(
-        () => db.doc('a/b').snapshots(),
-        throwsA(isA<WincheUnboundException>()),
+      // snapshots() reports the same exception, but as a STREAM error rather
+      // than by throwing at the call site. The original intent of this check is
+      // unchanged — it must be the documented exception, not a raw "Null check
+      // operator used on a null value" that tells an app author nothing — only
+      // the delivery differs.
+      //
+      // Delivery matters: the call site of `snapshots()` is typically a
+      // `StreamBuilder` inside `build()`, so throwing there tears down the
+      // widget tree instead of reaching the `hasError` branch. It also makes
+      // this consistent with `get()` and `commit()` above, which reject their
+      // Futures rather than throwing synchronously.
+      //
+      // See test/facade/unbound_listen_test.dart for the full contract.
+      expect(() => db.doc('a/b').snapshots(), returnsNormally);
+      expect(() => db.collection('a').snapshots(), returnsNormally);
+      await expectLater(
+        db.doc('a/b').snapshots(),
+        emitsInOrder([emitsError(isA<WincheUnboundException>()), emitsDone]),
       );
-      expect(
-        () => db.collection('a').snapshots(),
-        throwsA(isA<WincheUnboundException>()),
+      await expectLater(
+        db.collection('a').snapshots(),
+        emitsInOrder([emitsError(isA<WincheUnboundException>()), emitsDone]),
       );
     });
 
