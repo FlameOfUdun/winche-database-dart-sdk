@@ -4,6 +4,11 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+import 'package:winche_core/winche_core.dart';
+
+import 'src/facade/event_relay.dart';
+import 'src/facade/status_relay.dart';
 import 'src/offline/active_targets.dart';
 import 'src/offline/caching_read_coordinator.dart';
 import 'src/offline/eviction_manager.dart';
@@ -35,13 +40,12 @@ import 'src/core/values.dart';
 import 'src/protocol/writes.dart';
 import 'src/transport/transport.dart';
 
-export 'src/protocol/connection.dart' show ConnectionConfig, ConnectionState;
+export 'src/protocol/connection.dart' show ConnectionState;
 export 'src/protocol/exceptions.dart';
 export 'src/protocol/query_spec.dart';
 export 'src/protocol/aggregate.dart' show Aggregate, AggregateKind;
 export 'src/core/values.dart';
 export 'src/protocol/writes.dart';
-export 'src/transport/transport.dart' show Transport;
 export 'src/offline/local_store.dart' show LocalStore;
 export 'src/offline/memory_local_store.dart' show MemoryLocalStore;
 export 'src/offline/sembast_local_store.dart' show SembastLocalStore;
@@ -64,6 +68,7 @@ part 'src/facade/geo_point.dart';
 part 'src/facade/live_feed.dart';
 part 'src/facade/live_listener.dart';
 part 'src/facade/references.dart';
+part 'src/facade/session.dart';
 part 'src/facade/snapshots.dart';
 part 'src/facade/transaction.dart';
 part 'src/facade/write_batch.dart';

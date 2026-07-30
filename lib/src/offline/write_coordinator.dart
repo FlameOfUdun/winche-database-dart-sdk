@@ -37,15 +37,20 @@ class QueueingWriteCoordinator implements WriteCoordinator {
     final batchId = writes.length > 1 ? _newBatchId() : null;
     final ackTime = formatMetaTimestamp(now);
     final acks = <Map<String, Object?>>[];
-    for (final write in writes) {
-      await _queue.enqueue(
-        write,
-        localCommitTime: now,
-        base: await _baseFor(write.path),
-        appPrecondition: write.precondition,
-        batchId: batchId,
-      );
-      acks.add({'updateTime': ackTime, 'transformResults': null});
+    _queue.beginMutation();
+    try {
+      for (final write in writes) {
+        await _queue.enqueue(
+          write,
+          localCommitTime: now,
+          base: await _baseFor(write.path),
+          appPrecondition: write.precondition,
+          batchId: batchId,
+        );
+        acks.add({'updateTime': ackTime, 'transformResults': null});
+      }
+    } finally {
+      _queue.endMutation();
     }
     await _onEnqueued?.call();
     return acks;

@@ -1,40 +1,25 @@
 import 'package:test/test.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
+import 'package:winche_database/src/protocol/connection.dart'
+    show ConnectionConfig;
 
 void main() {
   final uri = Uri.parse('ws://fake/documents/ws');
 
-  test('inMemory: true constructs without a directoryResolver', () async {
-    final db = WincheDatabase(WincheDatabaseConfig(uri: uri, inMemory: true));
-    await db.close();
-  });
-
-  test('native default requires a directoryResolver', () {
-    // On the VM (_kIsWeb == false), omitting directoryResolver throws.
-    expect(
-        () => WincheDatabase(WincheDatabaseConfig(
-            uri: uri, namespaceResolver: () => 'u1')),
-        throwsArgumentError);
-  });
-
-  test('a persistent store requires a namespaceResolver', () {
-    expect(
-        () => WincheDatabase(WincheDatabaseConfig(
-            uri: uri, directoryResolver: () async => '/tmp/winche')),
-        throwsArgumentError);
-  });
-
-  test('inMemory: true with a directoryResolver throws', () {
-    expect(
-      () => WincheDatabase(WincheDatabaseConfig(
-          uri: uri, inMemory: true, directoryResolver: () async => '/tmp/winche')),
-      throwsArgumentError,
-    );
-  });
-
   test('withStore injects a store directly', () async {
-    final db = WincheDatabase.withStore(
-        ConnectionConfig(uri: uri, autoReconnect: false), MemoryLocalStore());
-    await db.close();
+    final db = WincheDatabase(WincheApp('database-ctor'))
+      ..debugBindStore(
+        ConnectionConfig(
+          uri: uri,
+          // Reconnection is unconditional; without a channelFactory this
+          // would attempt a real network dial (slow to fail) and then retry
+          // forever. Fail fast with a real-but-small backoff instead.
+          channelFactory: (_) => throw Exception('no real socket in this test'),
+          sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+        ),
+        MemoryLocalStore(),
+      );
+    await db.dispose();
   });
 }

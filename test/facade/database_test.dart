@@ -80,13 +80,9 @@ void main() {
       // Force a connection first so there is something to tear down.
       h.handler = (f) => h.respond(f, {'document': null});
       await h.db.doc('users/u1').get();
-      // close() is fire-and-forget; it must not throw.
-      h.db.close();
+      // dispose() is fire-and-forget; it must not throw.
+      h.db.dispose();
       await pump();
-    });
-
-    test('reconnects stream is exposed', () {
-      expect(h.db.reconnects, isA<Stream<void>>());
     });
   });
 }

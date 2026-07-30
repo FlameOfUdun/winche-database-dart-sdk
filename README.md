@@ -55,40 +55,83 @@ flowchart TD
 
 ## Getting started
 
+`winche_database` is a consumer service on top of `winche_core`: it does not dial
+anything or open a store until an identity is signed in, and it does not carry a
+sign-in surface of its own — that is a `WincheAuthService`'s job (a real backend
+package, or `ScriptedAuthService` from `package:winche_core/testing.dart` for
+tests and samples). Set up core once at startup, then reach the database
+anywhere:
+
 ```dart
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
-final db = WincheDatabase(
-  WincheDatabaseConfig(
-    uri: Uri.parse('ws://localhost:5183/documents/ws'),
-    tokenProvider: () => currentAuthToken,        // optional
-    namespaceResolver: () => currentUserId,       // required (scopes the local store)
-    directoryResolver: () async => appDir,        // required on native (sembast directory)
+Winche.initializeApp(
+  options: WincheOptions(
+    databaseEndpoint: Uri.parse('ws://localhost:5183/documents/ws'),
+    directoryResolver: () async => appDir,   // required on native (sembast root)
   ),
+);
+
+final db = WincheDatabase.instance;
+```
+
+Some auth package then registers itself against the same app (e.g.
+`MyAuthService(Winche.app)`) and announces identity changes; `db` binds to
+whichever identity is currently signed in and rebuilds automatically on every
+sign-in, sign-out and user switch. This package never sees a token directly —
+it reads one from the current session on every (re)dial.
+
+Tuning that has nothing to do with *which* backend or *which* identity lives on
+`WincheDatabaseConfig`, set right after obtaining the instance:
+
+```dart
+db.config = const WincheDatabaseConfig(
+  pingInterval: const Duration(seconds: 30),   // default
+  autoReconnect: true,                          // default
+  maxBackoff: const Duration(seconds: 30),      // default
+  maxFrameBytes: 1 << 20,                       // default 1 MiB — see Writes
+  inMemory: false,                              // default
+  conflictPolicy: ConflictPolicy.manual,        // default
+  maxCachedDocuments: null,                     // default — see Cache management
+  cacheSizeBytes: null,                         // default — see Cache management
 );
 ```
 
-The connection dials lazily on the first operation. Authentication happens at the
-WebSocket upgrade via an `?access_token=` query parameter built from
-`tokenProvider`. There is **no in-band auth-refresh**: to rotate an expired token,
-return the new value from `tokenProvider` and call `await db.reconnect()` — see
-[Authentication and user switching](#authentication-and-user-switching).
+Every field defaults, so `const WincheDatabaseConfig()` (equivalently, never
+touching `config`) is a valid, fully-working configuration. Setting `config`
+**throws a `StateError` once the database has been used** — once any member has
+opened its store or dialled its socket. This works on the line right after
+`.instance` because construction is lazy: obtaining the instance never itself
+counts as a use. Set it once, immediately, and never again on that instance.
 
-All options live on `WincheDatabaseConfig`: `uri`, `tokenProvider`, `pingInterval`
-(default 30 s), `autoReconnect` (default true), `maxBackoff` (default 30 s),
-`maxFrameBytes` (default 1 MiB — see [Writes](#writes-offline-first)), `inMemory`
-(default false), `namespaceResolver` (**required** for a persistent store —
-scopes it to one identity; see
-[Authentication and user switching](#authentication-and-user-switching)),
-`directoryResolver` (sembast directory; see [Persistence](#persistence)),
-`conflictPolicy` (default `manual`), and the optional local-cache caps
-`maxCachedDocuments` and `cacheSizeBytes` (both default null = unbounded — see
-[Cache management](#cache-management)).
+### What throws while nobody is signed in
 
-The two resolvers are both lazy — resolved on first store access and cached — so
-the constructor stays synchronous and cheap. `directoryResolver` says *where* the
-database lives (async, because `path_provider` is); `namespaceResolver` says
-*which* database in there.
+Before the first sign-in, and again after a sign-out, there is no session to
+serve reads, queue writes, or hold a store — the store is per-identity, so there
+is nothing to buffer into. Every operation that needs one throws
+`WincheUnboundException`.
+
+**Nuance:** `db.doc(...)` and `db.batch()` are lazy factories — building a
+reference or a batch is synchronous local bookkeeping and does not touch the
+session, so they never throw. The exception surfaces on the first call that
+actually needs the session: `.get()`, `.set()`, `.update()`, `.delete()`,
+`.commit()`, `runTransaction`, and so on. This lets you build references and
+queries eagerly (e.g. at widget construction time) and only worry about the
+unbound state where you actually await something.
+
+> **Known gap:** `.snapshots()` does not currently follow this rule — calling
+> it while unbound throws a raw `TypeError` (a null-check failure), not
+> `WincheUnboundException`. Gate `.snapshots()` on sign-in state yourself until
+> this is fixed; do not rely on catching an exception from it while signed out.
+
+`WincheUnboundException` is deliberately **not** a `WincheException` — it never
+crosses the wire, so it does not belong in that hierarchy, and `on
+WincheException` will not catch it. Being signed out is not an error to retry or
+surface next to a `PERMISSION_DENIED`; it is fixed by signing in. Gate on
+sign-in state (your auth package's own identity/session surface, e.g. a
+`WincheAuthService.activeIdentity`) rather than catching this exception at call
+sites.
 
 ---
 
@@ -270,6 +313,9 @@ drops reconnect silently. Server-side deletions are reconciled into the local
 cache (a deleted document never reappears), and with durable persistence a
 listener resumes across app restarts — see [Cache management](#cache-management).
 
+A `snapshots()` stream also completes on a user switch — see
+[Streams and user switches](#streams-and-user-switches).
+
 ---
 
 ## Writes, offline-first
@@ -289,7 +335,7 @@ flowchart TD
   Dr -->|ack| SY["WriteSynced"]
   Dr -->|version conflict| CO["WriteConflict<br/>retry / discard / overwrite"]
   Dr -->|permission / etc| FA["WriteFailed (dropped)"]
-  Dr -->|unauthenticated| PA["SyncPaused<br/>stays queued, resumes on reconnect()"]
+  Dr -->|unauthenticated| PA["SyncPaused<br/>stays queued, resumes when the session redials"]
   Dr -->|offline| OF["stays queued, retries on reconnect"]
 ```
 
@@ -306,9 +352,11 @@ db.syncEvents.listen((e) {
     // they still exist, so capture them here if the work matters.
     print(e.error);
   } else if (e is SyncPaused) {
-    // the token is dead; nothing was dropped. Refresh and resume:
-    await refreshToken();
-    await db.reconnect();
+    // The token is dead; nothing was dropped. This package has no reconnect()
+    // of its own any more — refresh the token in your auth service and
+    // announce it there; core re-dials the session automatically, and the
+    // drain resumes on its own once the socket is back up.
+    print(e.error);
   }
 });
 
@@ -362,7 +410,7 @@ final newBalance = await db.runTransaction((tx) async {
 
 ```dart
 db.connectionState;                 // ConnectionState.ready, .disconnected, ...
-db.connectionStates.listen(...);    // transitions (survives reconnects)
+db.connectionStates.listen(...);    // transitions (survives user switches)
 db.reconnects.listen(...);          // fires on each successful reconnect
 ```
 
@@ -373,73 +421,37 @@ stateDiagram-v2
   ready --> disconnected: socket drop
   disconnected --> reconnecting: autoReconnect
   reconnecting --> ready: welcome
-  ready --> closed: close()
-  closed --> [*]
+  ready --> disconnected: sign-out / user switch
 ```
 
 The client reconnects automatically on any drop (network loss, server restart,
-any close code). The only way to reach `closed` is by calling `close()`.
+any close code, or an expired token — core re-reads the session's token and
+redials on its own once a fresh one is available). There is no `close()` or
+`reconnect()` to call yourself any more: the session backing `db` is entirely
+owned by `winche_core`, built the moment an identity signs in and torn down the
+moment it signs out or is replaced.
 
-`close()` returns a `Future` — **await it**. It tears down in dependency order
-(live listeners → transport → sync controller → local store), so nothing can
-read the local store after it is closed. Live `snapshots()` streams complete
-with `done`, and the future resolves only once the store is really closed, which
-is what makes it safe to open a new `WincheDatabase` over the same on-disk file
-right afterwards. It is idempotent; `db.isClosed` reports the current state.
+---
 
-```dart
-await db.close();
-```
+### Streams and user switches
 
-### Authentication and user switching
+Three streams — `connectionStates`, `syncEvents`, `reconnects` — describe the
+*connection*, not any particular user's data, so they **survive** a sign-out or
+a user switch: they go quiet (`connectionStates` emits
+`ConnectionState.disconnected`) rather than ending. A connection banner or a
+"syncing…" indicator subscribed once at app startup keeps working across every
+sign-in for the life of the app.
 
-The auth token is a query parameter on the WebSocket **upgrade**, so it is fixed
-for the lifetime of a socket. Returning a new value from `tokenProvider` changes
-nothing until the connection is re-dialled.
-
-```dart
-await refreshToken();
-await db.reconnect();   // drops the socket, re-dials with the new token
-```
-
-`reconnect()` preserves live listeners: they resubscribe in place, including any
-that had died on a `PERMISSION_DENIED` / `UNAUTHENTICATED` subscribe, and a write
-queue stalled with `SyncPaused` resumes draining. It throws
-`UnauthenticatedException` if the server rejects the new token.
-
-**A user change is not a token change.** The local store is single-tenant — the
-document cache, the pending-write queue, listener resume tokens and query
-membership carry no identity. Reusing one database across two users means the
-second user reads the first user's cached documents, and the first user's
-un-synced writes replay under the second user's token (the server rejects them
-with `PERMISSION_DENIED`, and they are dropped).
-
-`namespaceResolver` is therefore **required** for a persistent store — scoping is
-a decision you take, not one you can forget. Rebuild the database on sign-in:
-
-```dart
-WincheDatabase openFor(String userId) => WincheDatabase(
-      WincheDatabaseConfig(
-        uri: uri,
-        tokenProvider: () => auth.tokenFor(userId),
-        namespaceResolver: () => userId,         // → winche_<userId>.db
-        directoryResolver: () async => appDir,
-      ),
-    );
-
-// on user switch
-await db.close();        // await it: the store must be closed before reopening
-db = openFor(newUserId);
-```
-
-Each identity gets its own database file, so nothing leaks between accounts, and
-the previous user's queued writes stay on disk and drain when they sign back in.
-
-The resolved namespace is **cached for the lifetime of the instance** — it pins
-the identity. `namespaceResolver: () => currentUserId` does not follow a user
-change; closing and rebuilding is what does. It must resolve to
-`[A-Za-z0-9._-]+` (it is a file-name component), throwing `ArgumentError` on
-first store access otherwise, and must be omitted when `inMemory: true`.
+`snapshots()`, by contrast, **completes** (`onDone`) on a user switch. A
+`QueryReference`/`DocumentReference` listener is showing *one identity's*
+documents; if it silently kept running across a switch, a widget built for
+Alice would start rendering Bob's data with no signal anywhere that anything
+changed. Completing the stream forces the normal Dart/Flutter idiom — the
+widget that built the subscription notices it ended and resubscribes — rather
+than leaving stale data on screen. In practice this falls out naturally: the
+same rebuild that already happens when your app's sign-in state changes (e.g. a
+`StreamBuilder` over your auth package's identity stream) is what tears down the
+old `snapshots()` subscription and starts a new one.
 
 ---
 
@@ -449,30 +461,43 @@ Operations throw a `WincheException` subclass on failure:
 `InvalidQueryException` (with `jsonPath` / `code`), `InvalidArgumentException`,
 `DeadlineExceededException`, `InternalException`, `UnavailableException`.
 
+Calling anything before sign-in, or after a sign-out, throws
+`WincheUnboundException` instead — see
+[What throws while nobody is signed in](#what-throws-while-nobody-is-signed-in).
+It is not a `WincheException` and `on WincheException` will not catch it.
+
 ---
 
 ## Persistence
 
-Persistence is **on by default** via sembast. The sembast directory is resolved lazily
-on first store access from `WincheDatabaseConfig.directoryResolver` — **required
-on native** platforms, ignored on the web (which uses IndexedDB):
+Persistence is **on by default** via sembast. The sembast root is resolved
+lazily on first store access from `WincheOptions.directoryResolver` — **required
+on native** platforms for a persistent store, ignored on the web (which uses
+IndexedDB):
 
 ```dart
-final db = WincheDatabase(WincheDatabaseConfig(
-  uri: uri,
-  directoryResolver: () async => (await getApplicationDocumentsDirectory()).path,
-));
+Winche.initializeApp(
+  options: WincheOptions(
+    databaseEndpoint: uri,
+    directoryResolver: () async =>
+        (await getApplicationDocumentsDirectory()).path,
+  ),
+);
 ```
 
-For a non-durable in-memory store (state lost on exit), set `inMemory: true`
-(then `directoryResolver` must be omitted):
+Each signed-in identity gets its own store on disk, at
+`<root>/winche/<storageKey>/` (`storageKey`, not the raw identity id — see
+`WincheIdentity.storageKey` — so ids that differ only in case never collide on a
+case-insensitive filesystem). This is core's `directoryResolver`, shared by
+every Winche service under the app; `winche_database` only decides the
+`winche/<storageKey>` part beneath it.
+
+For a non-durable in-memory store (state lost on exit), set `inMemory: true` on
+`WincheDatabaseConfig` (then `directoryResolver` is never consulted):
 
 ```dart
-final db = WincheDatabase(WincheDatabaseConfig(uri: uri, inMemory: true));
+db.config = const WincheDatabaseConfig(inMemory: true);
 ```
-
-Advanced / testing: inject a custom `LocalStore` (using the lower-level
-`ConnectionConfig`) with `WincheDatabase.withStore(connectionConfig, store)`.
 
 ---
 
@@ -505,11 +530,9 @@ its next read (deleted documents stay tombstoned). A configured cap is also
 enforced against already-persisted documents on startup.
 
 ```dart
-final db = WincheDatabase(WincheDatabaseConfig(
-  uri: uri,
-  directoryResolver: () async => appDir,
+db.config = const WincheDatabaseConfig(
   cacheSizeBytes: 50 * 1024 * 1024,   // ~50 MiB cap (or maxCachedDocuments: 10000)
-));
+);
 ```
 
 > A document deleted while the app is fully offline reconciles on the next

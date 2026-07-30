@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../protocol/connection.dart';
 import '../protocol/exceptions.dart';
 import '../protocol/messages.dart';
 import '../core/paths.dart';
@@ -64,12 +65,20 @@ class SyncController {
   /// The in-flight [drain], so [dispose] can wait for it to unwind instead of
   /// letting it keep touching the store after the database is closed.
   Future<void>? _drainInFlight;
-  StreamSubscription<void>? _reconnectSub;
+  StreamSubscription<ConnectionState>? _stateSub;
 
-  /// Subscribes to reconnect events to drive draining; call once after wiring.
+  /// Starts draining whenever the transport reports a working connection; call
+  /// once after wiring.
+  ///
+  /// One rule covers every case that used to need its own mechanism: the first
+  /// connect, each reconnect, and a session binding onto an already-live socket.
+  /// That works because [Transport.connectionStates] is a level — it hands this
+  /// subscription the current state immediately and never completes — so there
+  /// is nothing to seed and no event that can be missed by subscribing late.
   void start() {
-    _reconnectSub = _transport.reconnects.listen(
-      (_) {
+    _stateSub = _transport.connectionStates.listen(
+      (state) {
+        if (state != ConnectionState.ready) return;
         // A fresh socket re-read `tokenProvider`, so a previous auth stall may
         // be over — let the queue try again and report a new stall if not.
         _authStalled = false;
@@ -92,6 +101,10 @@ class SyncController {
   /// conflict behavior.
   Future<void> drain() {
     if (_draining || _disposed) return Future<void>.value();
+    // A batch is partway into the queue. Acting now would send an incomplete
+    // unit and split an atomic commit. The coordinator drains once the batch is
+    // durable, so skipping here loses nothing.
+    if (_queue.isMutating) return Future<void>.value();
     return _drainInFlight = _drain();
   }
 
@@ -129,7 +142,7 @@ class SyncController {
   /// draining, offline, or empty. Returns true if a unit was acked or its error
   /// was handled (conflict paused/overwritten/dropped).
   Future<bool> drainOnce() async {
-    if (_draining || _disposed) return false;
+    if (_draining || _disposed || _queue.isMutating) return false;
     _draining = true;
     try {
       final all = await _queue.all();
@@ -162,7 +175,7 @@ class SyncController {
       // Not a verdict on this write — we simply are not authenticated right now,
       // and every following unit would fail identically. Keep the whole queue
       // intact and stop, exactly as if we were offline. The next reconnect (or
-      // an explicit `WincheDatabase.reconnect()` after a token refresh) resumes
+      // core's onTokenChanged after a token rotation) resumes
       // the drain from here.
       _emitAuthStall(unit, e);
       return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
@@ -479,7 +492,7 @@ class SyncController {
 
   Future<void> dispose() async {
     _disposed = true;
-    await _reconnectSub?.cancel();
+    await _stateSub?.cancel();
     // Let an in-flight drain unwind (it breaks out at its next loop check)
     // before the caller closes the store underneath it. The timeout is a
     // backstop only: callers close the transport first, which fails the request

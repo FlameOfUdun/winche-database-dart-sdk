@@ -120,7 +120,7 @@ void main() {
       });
       await pump();
 
-      await h.db.close();
+      await h.db.dispose();
       await pump(20);
       await sub.cancel();
     }, (e, _) => errors.add(e));
@@ -150,7 +150,7 @@ void main() {
       });
       await pump();
 
-      await h.db.close();
+      await h.db.dispose();
       await pump(20);
       await sub.cancel();
     }, (e, _) => errors.add(e));
@@ -168,11 +168,11 @@ void main() {
     h.db.doc('users/u1').snapshots().listen((_) {}, onDone: () => done = true);
     await pump();
 
-    await h.db.close();
+    await h.db.dispose();
     await pump();
 
     expect(done, isTrue);
-    expect(h.db.isClosed, isTrue);
+    expect(h.db.isDisposed, isTrue);
   });
 
   test('close() only closes the store once, and waits for it', () async {
@@ -180,12 +180,12 @@ void main() {
     final h = FacadeHarness(store: store);
     await h.db.doc('users/u1').get(const GetOptions(source: Source.cache));
 
-    await h.db.close();
+    await h.db.dispose();
     expect(store.closed, isTrue,
         reason: 'close() must await the store, not fire-and-forget it');
 
     // Idempotent: a second close is a no-op, not a second teardown.
-    await h.db.close();
+    await h.db.dispose();
   });
 
   test('close() while a write is draining does not hang or hit the store',
@@ -205,7 +205,7 @@ void main() {
       unawaited(h.db.doc('users/u1').set({'name': 'Alice'}));
       await pump();
 
-      await h.db.close().timeout(const Duration(seconds: 5));
+      await h.db.dispose().timeout(const Duration(seconds: 5));
       await pump(20);
     }, (e, _) => errors.add(e));
 

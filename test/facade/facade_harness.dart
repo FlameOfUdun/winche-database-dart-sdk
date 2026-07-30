@@ -1,14 +1,18 @@
 import 'dart:async';
 
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
+import 'package:winche_database/src/protocol/connection.dart'
+    show ConnectionConfig;
 
 import '../protocol/fake_channel.dart';
 
 /// Pumps the event loop a few turns so chained futures/microtasks settle.
 ///
 /// The [FakeChannel] dispatches synchronously (`sync: true`), but the facade
-/// layers (`WsTransport` async*, `Future.whenComplete`, broadcast streams) add
-/// a handful of microtask hops, so several turns are needed.
+/// layers (`Future.whenComplete`, broadcast streams, `ValueRelay`'s
+/// `Stream.multi`) add a handful of microtask hops, so several turns are
+/// needed.
 Future<void> pump([int times = 6]) async {
   for (var i = 0; i < times; i++) {
     await Future<void>.delayed(Duration.zero);
@@ -18,41 +22,68 @@ Future<void> pump([int times = 6]) async {
 /// Full-stack facade test harness.
 ///
 /// Wires a real [WincheDatabase] → [Transport] → [ProtocolConnection] on top of
-/// an in-memory [FakeChannel]. The connection dials lazily on the first
-/// operation; the harness auto-answers the `hello` handshake with a `welcome`,
-/// then routes each subsequent client request frame to [handler] (or, if unset,
-/// replies with [defaultResult]).
+/// an in-memory [FakeChannel]. The connection dials as soon as the session
+/// binds, not lazily on the first operation; the harness auto-answers the
+/// `hello` handshake with a `welcome`, then routes each subsequent client
+/// request frame to [handler] (or, if unset, replies with [defaultResult]).
 class FacadeHarness {
-  FacadeHarness(
-      {bool autoReconnect = false,
-      LocalStore? store,
-      int? maxCachedDocuments,
-      int? cacheSizeBytes})
-      : channel = FakeChannel()..startCapture() {
-    db = WincheDatabase.withStore(
-      ConnectionConfig(
-        uri: Uri.parse('ws://fake/documents/ws'),
-        channelFactory: (_) {
-          // The backend sends `welcome` immediately on upgrade — there is no
-          // `hello` and no in-band auth. Emit it on every (re)dial. Deferred to
-          // a microtask so it lands after connect() has subscribed and armed
-          // its welcome completer.
-          scheduleMicrotask(() => channel
-              .serverSend({'type': 'welcome', 'connectionId': 'test-conn'}));
-          return channel;
-        },
-        pingInterval: const Duration(hours: 1), // disable keepalive pings
-        autoReconnect: autoReconnect,
-      ),
-      store ?? MemoryLocalStore(), // null → default in-memory store (offline is always on)
-      maxCachedDocuments: maxCachedDocuments,
-      cacheSizeBytes: cacheSizeBytes,
-    );
+  FacadeHarness({
+    LocalStore? store,
+    int? maxCachedDocuments,
+    int? cacheSizeBytes,
+  }) : channel = FakeChannel()..startCapture() {
+    // No auth service is registered on this app: `debugBindStore` binds a
+    // session directly over the fake transport/store below, bypassing
+    // identity entirely.
+    db = WincheDatabase(WincheApp('facade-harness'))
+      ..debugBindStore(
+        ConnectionConfig(
+          uri: Uri.parse('ws://fake/documents/ws'),
+          channelFactory: (_) {
+            // This harness has exactly one fake channel, so it cannot honour a
+            // real redial: a second dial attempt (now always possible, since
+            // reconnection is unconditional) would resend `welcome` onto a
+            // sink that a prior drop already closed and crash with "Bad state:
+            // Cannot add event after closing." Fail the redial instead — tests
+            // that need a real multi-socket reconnect use ReconnectHarness /
+            // DocReconnectHarness, which mint a fresh channel per dial.
+            if (_dialed) {
+              throw StateError(
+                'FacadeHarness has a single fake channel and cannot be '
+                'redialed; use ReconnectHarness for reconnect tests.',
+              );
+            }
+            _dialed = true;
+            // The backend sends `welcome` immediately on upgrade — there is no
+            // `hello` and no in-band auth. Deferred to a microtask so it lands
+            // after connect() has subscribed and armed its welcome completer.
+            scheduleMicrotask(
+              () => channel.serverSend({
+                'type': 'welcome',
+                'connectionId': 'test-conn',
+              }),
+            );
+            return channel;
+          },
+          pingInterval: const Duration(hours: 1), // disable keepalive pings
+          // Reconnection is unconditional; give the retry loop a small real
+          // delay so a persistently-failing channelFactory in a test cannot
+          // spin it hot.
+          sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+        ),
+        store ??
+            MemoryLocalStore(), // null → default in-memory store (offline is always on)
+        maxCachedDocuments: maxCachedDocuments,
+        cacheSizeBytes: cacheSizeBytes,
+      );
     channel.onClientFrame = _route;
   }
 
   final FakeChannel channel;
   late final WincheDatabase db;
+
+  /// Whether the single fake channel has already been handed out once.
+  bool _dialed = false;
 
   /// Per-request handler. Receives each client request frame (never `hello`);
   /// it must reply via [respond]/[respondError], stream listener frames, or
@@ -80,8 +111,11 @@ class FacadeHarness {
 
   /// Sends a `response` frame correlated to [frame]'s id.
   void respond(Map<String, Object?> frame, Map<String, Object?> result) {
-    channel
-        .serverSend({'type': 'response', 'id': frame['id'], 'result': result});
+    channel.serverSend({
+      'type': 'response',
+      'id': frame['id'],
+      'result': result,
+    });
   }
 
   /// Sends an `error` frame correlated to [frame]'s id.
@@ -123,15 +157,15 @@ class FacadeHarness {
   }
 
   Future<void> close() async {
-    await db.close();
+    await db.dispose();
     await pump();
   }
 }
 
 /// Encodes a native field map into wire (tagged-value) form.
 Map<String, Object?> wireFields(Map<String, Object?> native) => {
-      for (final e in native.entries) e.key: toValue(e.value).toJson(),
-    };
+  for (final e in native.entries) e.key: toValue(e.value).toJson(),
+};
 
 /// Builds a wire `document` map (the shape inside a `doc.get`/query response).
 Map<String, Object?> wireDoc(
@@ -160,9 +194,8 @@ Map<String, Object?> wireDoc(
 Map<String, Object?> writeResultsPayload({
   String updateTime = '2026-06-08T10:00:00+00:00',
   int count = 1,
-}) =>
-    {
-      'writeResults': [
-        for (var i = 0; i < count; i++) {'updateTime': updateTime},
-      ],
-    };
+}) => {
+  'writeResults': [
+    for (var i = 0; i < count; i++) {'updateTime': updateTime},
+  ],
+};

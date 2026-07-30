@@ -80,8 +80,13 @@ void main() {
       'disconnect → reconnect: new channel dialed, no hello sent, welcome → ready',
       () async {
     final (conn, h) = await _connect();
+    // Attached after the initial connect already reached `ready`, so counting
+    // every subsequent `ready` transition here counts exactly the successful
+    // re-dials, the same events the now-deleted edge-triggered signal fired on.
     var reconnectCount = 0;
-    conn.reconnects.listen((_) => reconnectCount++);
+    conn.states.listen((s) {
+      if (s == ConnectionState.ready) reconnectCount++;
+    });
 
     await h.channels[0].serverClose();
     await _pump();
@@ -279,8 +284,13 @@ void main() {
   test('disconnect after a successful reconnect triggers another reconnect',
       () async {
     final (conn, h) = await _connect();
+    // See the comment on the first test in this file: counting `ready`
+    // transitions observed by a listener attached after the initial connect
+    // counts exactly the successful re-dials.
     var reconnectCount = 0;
-    conn.reconnects.listen((_) => reconnectCount++);
+    conn.states.listen((s) {
+      if (s == ConnectionState.ready) reconnectCount++;
+    });
 
     // First disconnect → reconnect via channels[1].
     await h.channels[0].serverClose();

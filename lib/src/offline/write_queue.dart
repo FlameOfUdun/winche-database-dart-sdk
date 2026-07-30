@@ -7,6 +7,24 @@ class WriteQueue {
   WriteQueue(this._store);
   final LocalStore _store;
 
+  /// Whether a multi-write batch is partway through being enqueued.
+  ///
+  /// The queue groups a batch by `batchId`, so between the first and last
+  /// insert it holds an *incomplete* unit. A drain that read it then would send
+  /// half a batch and split an atomic commit across two frames. The sync
+  /// controller therefore refuses to drain while this is set; the coordinator
+  /// drains itself once the batch is fully durable, so no trigger is lost.
+  bool get isMutating => _mutating > 0;
+  int _mutating = 0;
+
+  /// Marks the start of a multi-insert. Always pair with [endMutation] in a
+  /// `finally`, or the drain stays blocked for the life of the session.
+  void beginMutation() => _mutating++;
+
+  void endMutation() {
+    if (_mutating > 0) _mutating--;
+  }
+
   /// Appends [write] to the queue with a fresh seq and returns the stored
   /// [PendingWrite].
   Future<PendingWrite> enqueue(

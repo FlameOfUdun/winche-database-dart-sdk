@@ -161,3 +161,34 @@ class UnavailableException extends WincheException {
   @override
   String toString() => 'UnavailableException: $message';
 }
+
+/// Thrown when the database is used while no identity is bound — before the
+/// first sign-in, or after a sign-out.
+///
+/// Distinct from a [StateError] on purpose. This state is **recoverable**: the
+/// same facade starts working again as soon as an identity arrives. A
+/// [StateError] from this package means the facade itself has been disposed,
+/// which is terminal.
+///
+/// There is no local store to serve or queue into while unbound — the store is
+/// per-identity — so reads and writes both throw rather than buffering. A write
+/// buffered while signed out would replay under whoever signs in next.
+///
+/// **This is deliberately not a [WincheException].** Every member of that
+/// hierarchy carries a PROTOCOL §5.1 status string that the server sent; this
+/// state never crosses the wire, and inventing a status for it would put a
+/// client-side lifecycle concern into a wire vocabulary.
+///
+/// The practical consequence: `on WincheException` does **not** catch this.
+/// That is intended. A `PERMISSION_DENIED` is worth retrying or surfacing;
+/// being signed out is not — it is fixed by signing in, not by handling it
+/// where you handle server errors. Gate on sign-in state instead of catching.
+final class WincheUnboundException implements Exception {
+  /// Creates the exception.
+  WincheUnboundException();
+
+  @override
+  String toString() =>
+      'WincheUnboundException: no identity is bound to this app. '
+      'Wait for sign in before using the database.';
+}

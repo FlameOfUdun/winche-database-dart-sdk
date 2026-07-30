@@ -1,5 +1,128 @@
 # Changelog
 
+## 6.0.0
+
+**Breaking: this release discards every existing local store.** The on-disk layout moved from
+`<root>/winche_<namespace>.db` to `<root>/winche/<storageKey>/`, and no migration is performed. On
+first launch under 6.0 every user starts from an empty cache and **any writes that had not yet synced
+are lost**. Drain pending writes before upgrading if that matters to you.
+
+### Changed
+
+- **Breaking: connectivity is a level you observe, not a thing you steer.**
+  `connectionStates` now hands every new subscriber the current state before
+  forwarding changes, suppresses consecutive duplicates, and never completes on a
+  failed dial — so a `StreamBuilder` built at any moment, including after a user
+  switch, renders the truth immediately instead of waiting for the next
+  transition. `connectionState` is also readable while unbound, reporting
+  `disconnected` rather than throwing `WincheUnboundException`: a widget that
+  renders a connection chip must be able to build before anyone signs in.
+  Reconnection is unconditional, and a session dials as soon as it binds rather
+  than waiting for a read, a listener, or a queued write.
+- **Breaking: `winche_database` is now built on `winche_core`.** `WincheDatabase` is a
+  `WincheDatabaseService` — construct it once via `Winche.initializeApp(...)` and then
+  `WincheDatabase.instance` (or `instanceFor(app)`), not `WincheDatabase(config)`. Core owns the
+  session lifecycle: it builds a session for whichever identity is currently signed in (announced by
+  a `WincheAuthService`, e.g. a real auth package, or `ScriptedAuthService` from
+  `package:winche_core/testing.dart`) and disposes it on sign-out or when the identity changes.
+  `winche_database` itself has no sign-in surface and never sees a token directly — it reads one from
+  the session on every (re)dial.
+- **Breaking: `WincheDatabaseConfig` keeps only tuning**, set via
+  `WincheDatabase.instance.config = ...` immediately after obtaining the instance (it now **throws a
+  `StateError` once the database has been used** — opened its store or dialled its socket — because
+  construction is lazy and that window is what makes "immediately after `.instance`" reliable). The
+  surviving fields are unchanged: `pingInterval`, `autoReconnect`, `maxBackoff`, `maxFrameBytes`,
+  `inMemory`, `conflictPolicy`, `maxCachedDocuments`, `cacheSizeBytes`. Four fields left, each replaced
+  by something on the core side:
+  - `uri` → `WincheOptions.databaseEndpoint`, passed once to `Winche.initializeApp`.
+  - `tokenProvider` → gone; the session's token is read from whichever `WincheAuthService` is
+    registered with the app.
+  - `namespaceResolver` → gone; the store is scoped by the signed-in identity itself, not a value you
+    supply — see the on-disk layout change above.
+  - `directoryResolver` → `WincheOptions.directoryResolver`, also passed once to
+    `Winche.initializeApp` and shared by every Winche service under that app.
+- **Breaking: `WincheDatabase.close()`, `isClosed` and `reconnect()` are gone.** There is nothing left
+  to call them on: the session backing the facade is owned entirely by core, torn down automatically
+  on sign-out and rebuilt automatically on sign-in or a user switch, and re-dialled automatically when
+  the auth service reports a token rotation. Token rotation is now a nudge (the existing session
+  re-dials in place), not a rebuild — so it no longer tears down and reopens the local store the way an
+  explicit `reconnect()` implied.
+- **Breaking: calling the database while no identity is signed in now throws `WincheUnboundException`**
+  instead of running against an unscoped/default store. It fires from every member that actually
+  touches the session — `.get()`, `.set()`, `.update()`, `.delete()`, `.commit()`, `runTransaction`,
+  `waitForPendingWrites`, and so on. **Nuance:** `doc()` and `batch()` are lazy factories — building a
+  reference or a batch is synchronous local bookkeeping, so they never throw; the exception surfaces on
+  the first call that actually needs the session. `WincheUnboundException` is deliberately not a
+  `WincheException` (it never crosses the wire), so `on WincheException` does not catch it — gate on
+  sign-in state instead of handling it as a server error. **Known gap:** `.snapshots()` does not yet
+  follow this rule — calling it while unbound throws a raw `TypeError` (null-check failure) rather than
+  `WincheUnboundException`, because `_LiveListener`'s constructor force-unwraps the session. Gate
+  `.snapshots()` on sign-in state yourself until this is fixed.
+- **Breaking: a user switch now completes every `snapshots()` stream** (`onDone`), because a listener
+  is displaying one identity's data and must not silently start showing the next identity's documents.
+  The app is expected to resubscribe — in practice this falls out of the same rebuild that already
+  reacts to a sign-in state change. `connectionStates`, `syncEvents` and `reconnects` describe the
+  connection rather than any one identity's data, so they **survive** a user switch instead: they go
+  quiet (`connectionStates` emits `ConnectionState.disconnected`) rather than ending.
+- The `inMemory` × `namespaceResolver` validation from 5.0 (rejecting a persistent store configured
+  without a namespace, and rejecting a namespace supplied alongside `inMemory: true`) is gone because
+  it is no longer expressible — there is no `namespaceResolver` left to validate against `inMemory`.
+
+### Removed
+
+- **Breaking: `WincheDatabase.reconnects`.** It carried no information
+  `connectionStates` lacks — it fired at exactly the two points where the state
+  reached `ready` on a *re*-dial, and deliberately not on the first connect, so it
+  was `connectionStates.where(ready)` minus its first element. Derive it if you
+  want it:
+  `db.connectionStates.where((s) => s == ConnectionState.ready).skip(1)`.
+- **Breaking: `WincheDatabaseConfig.autoReconnect`.** Reconnection is
+  unconditional; an app cannot stop the SDK from recovering.
+- **Breaking: `Transport` and `ConnectionConfig` are no longer exported.** No
+  consumer implements a transport, and `ConnectionConfig.channelFactory` is an
+  injection seam that should not be part of the public surface.
+- **Breaking: `WincheDatabase.listenEvents` and `releaseSubscription`.** Both were
+  dead — nothing called them — and both returned `ServerFrame`, a type the barrel
+  does not export, so a caller could not name the return value.
+
+### Fixed
+
+- **Offline writes now sync when the connection comes back.** Two defects had to
+  line up for this to fail, and neither was covered by tests. First, a queue
+  restored from disk had no drain trigger at all: `notifyEnqueued` fires only in
+  the session that enqueued a write, and the old `reconnects` signal could not
+  fire for a first connect. Second and worse, a failed first dial made recovery
+  impossible: `connect()` made exactly one attempt and threw without entering the
+  reconnect loop, and the transport's `reconnects` getter *completed its stream*
+  on that failure, leaving the sync controller permanently deaf for the life of
+  the session. So "open the app offline, write something, network returns" never
+  synced. Draining is now driven by the connection state reaching `ready`, which
+  covers the first connect, every reconnect, and binding onto an already-live
+  socket. Verified end to end against the .NET sample server, including two users
+  queueing writes with the server down: each user's writes drain on their own
+  sign-in and only then, leaving the other's queue untouched.
+- **A `WriteBatch.commit()` can no longer be split across two frames.**
+  `applyWrites` assigned a `batchId` and then enqueued each write in a loop with
+  two await points per iteration, notifying the drain only afterwards. A drain
+  firing between iterations read a *partial* batch and sent it, so the server
+  could apply half of an atomic commit. Reachable before this release whenever a
+  reconnect landed mid-batch; draining on connection state made it routine,
+  because the first `ready` typically arrives while a batch is still being
+  enqueued. The queue now reports that a multi-insert is in flight and the drain
+  skips while it is — the coordinator drains once the batch is durable, so no
+  trigger is lost.
+- **A closed connection can no longer be revived by a reconnect already in
+  flight.** `close()` marked the state `closed`, but the reconnect loop set
+  `reconnecting` at entry without checking, and `_setState` had no guard against
+  adding to a closed controller. A loop scheduled moments before teardown could
+  therefore resurrect the connection, keep dialling a socket nobody owned, and
+  throw `StateError` from inside a callback where nothing catches it. Previously
+  masked by `autoReconnect: false`; unconditional reconnection made it reachable
+  on any teardown racing a drop.
+- **A disposed database releases its status subscribers.** The relay behind
+  `connectionStates` forwarded values and errors but not completion, so disposal
+  left every subscriber attached to an open controller.
+
 ## 5.0.0
 
 ### Added

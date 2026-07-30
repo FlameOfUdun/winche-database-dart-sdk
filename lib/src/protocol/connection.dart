@@ -29,7 +29,6 @@ final class ConnectionConfig {
     required this.uri,
     this.tokenProvider,
     this.pingInterval = const Duration(seconds: 30),
-    this.autoReconnect = true,
     this.maxBackoff = const Duration(seconds: 30),
     this.maxFrameBytes = 1 << 20,
     this.channelFactory,
@@ -46,9 +45,6 @@ final class ConnectionConfig {
 
   /// Interval for keep-alive pings. Defaults to 30 seconds.
   final Duration pingInterval;
-
-  /// Whether to automatically reconnect on unexpected disconnect.
-  final bool autoReconnect;
 
   /// Maximum backoff between reconnect attempts.
   final Duration maxBackoff;
@@ -102,14 +98,12 @@ class ProtocolConnection {
   ConnectionState get currentState => _state;
 
   void _setState(ConnectionState s) {
+    // `closed` is terminal. A retry loop scheduled just before close() must not
+    // be able to reopen a connection whose socket and controllers are gone.
+    if (_state == ConnectionState.closed && s != ConnectionState.closed) return;
     _state = s;
-    _stateController.add(s);
+    if (!_stateController.isClosed) _stateController.add(s);
   }
-
-  /// Emits a void event each time a reconnect succeeds.
-  Stream<void> get reconnects => _reconnectController.stream;
-  final StreamController<void> _reconnectController =
-      StreamController<void>.broadcast();
 
   // ---------------------------------------------------------------------------
   // Internal
@@ -171,22 +165,29 @@ class ProtocolConnection {
     });
   }
 
-  /// Dials the server and waits for the welcome frame.
+  /// Dials and completes the handshake.
   ///
-  /// Authentication is performed at the WebSocket upgrade level via the
-  /// `?access_token=` query parameter — no in-band hello message is sent.
-  ///
-  /// [welcomeTimeout] caps how long to wait for the welcome frame; defaults to
-  /// 15 seconds. Throws [UnavailableException] if the timeout elapses.
-  /// Throws [UnauthenticatedException] if the server returns close code 4401.
-  /// Throws [WincheException] if the server sends an error frame before welcome.
-  /// Throws [UnavailableException] if the connection closes before welcome or
-  /// if the channel factory throws a transport-level exception (e.g. on a
-  /// refused connection).
+  /// Rethrows the failure to its caller — `request()` depends on that to surface
+  /// [UnavailableException] — *and* hands recovery to the auto-reconnect loop, so
+  /// a connection that starts while the network is down is not dead forever. The
+  /// two are not in conflict: the caller learns this attempt failed, while the
+  /// loop keeps working in the background.
   Future<void> connect({
     Duration welcomeTimeout = const Duration(seconds: 15),
   }) async {
     _setState(ConnectionState.connecting);
+    try {
+      await _initialDial(welcomeTimeout);
+    } catch (_) {
+      if (_state != ConnectionState.closed) unawaited(_reconnectLoop());
+      rethrow;
+    }
+    _setState(ConnectionState.ready);
+    _startPing();
+  }
+
+  /// The first dial + handshake. Leaves state transitions to [connect].
+  Future<void> _initialDial(Duration welcomeTimeout) async {
     try {
       _channel = await _channelFactory(await _dialUri());
     } catch (e) {
@@ -218,8 +219,6 @@ class ProtocolConnection {
       _sub?.cancel();
       rethrow;
     }
-    _setState(ConnectionState.ready);
-    _startPing();
   }
 
   /// Sends a client frame and waits for the server's response or error.
@@ -323,15 +322,14 @@ class ProtocolConnection {
   ///
   /// This is the only way to push a rotated auth token onto a live connection:
   /// the token is a query parameter on the WebSocket upgrade, so it is fixed for
-  /// the lifetime of a socket. Listener streams and the [reconnects] signal are
+  /// the lifetime of a socket. Listener streams and the state stream are
   /// preserved, so subscriptions resume in place exactly as after a network
-  /// drop, and [reconnects] fires on success.
+  /// drop, and the state returns to `ready` on success.
   ///
   /// Throws if the re-dial fails — [UnauthenticatedException] when the server
   /// rejects the new token, [UnavailableException] when it is unreachable. In
   /// that case the connection falls back to its normal post-drop behaviour:
-  /// the auto-reconnect loop if [ConnectionConfig.autoReconnect] is set,
-  /// otherwise `disconnected`.
+  /// the auto-reconnect loop.
   Future<void> reconnect() async {
     if (_state == ConnectionState.closed) {
       throw StateError('Cannot reconnect: connection is closed.');
@@ -356,16 +354,11 @@ class ProtocolConnection {
       await _dialOnce();
     } catch (e) {
       if (_state == ConnectionState.closed) return;
-      if (config.autoReconnect) {
-        unawaited(_reconnectLoop());
-      } else {
-        _setState(ConnectionState.disconnected);
-      }
+      unawaited(_reconnectLoop());
       rethrow;
     }
     _setState(ConnectionState.ready);
     _startPing();
-    if (!_reconnectController.isClosed) _reconnectController.add(null);
   }
 
   /// One dial + handshake on the reconnect path (shared by [reconnect] and
@@ -398,6 +391,7 @@ class ProtocolConnection {
   /// Sends a graceful close.
   Future<void> close() async {
     _setState(ConnectionState.closed);
+    if (!_closed.isCompleted) _closed.complete();
     _pingTimer?.cancel();
     // 1. Fail all pending requests FIRST so callers aren't stuck waiting
     //    for a sink close that may block on a dead network.
@@ -411,7 +405,6 @@ class ProtocolConnection {
     } catch (_) {
       // Ignore errors from closing a dead socket.
     }
-    if (!_reconnectController.isClosed) await _reconnectController.close();
     await _stateController.close();
   }
 
@@ -536,10 +529,9 @@ class ProtocolConnection {
       );
       _welcomeCompleter = null;
     }
-    // Start auto-reconnect loop if enabled.
-    if (config.autoReconnect) {
-      _reconnectLoop();
-    }
+    // Always recover: reconnection is not configurable, so a drop is always
+    // followed by an attempt to come back.
+    _reconnectLoop();
   }
 
   // ---------------------------------------------------------------------------
@@ -548,6 +540,7 @@ class ProtocolConnection {
 
   /// Exponential backoff reconnect loop. Runs until ready or closed.
   Future<void> _reconnectLoop() async {
+    if (_state == ConnectionState.closed) return;
     _setState(ConnectionState.reconnecting);
     var attempt = 0;
     const baseMs = 250;
@@ -563,7 +556,12 @@ class ProtocolConnection {
                 .toInt()
                 .abs();
         final delay = Duration(milliseconds: capped + jitterMs);
-        await _sleeper(delay);
+        // Race the backoff against close(), so teardown is not stuck waiting out
+        // a delay of up to maxBackoff (30s by default).
+        await Future.any<void>([
+          Future<void>.value(_sleeper(delay)),
+          _closed.future,
+        ]);
         if (_state != ConnectionState.reconnecting) return;
       }
       attempt++;
@@ -575,9 +573,6 @@ class ProtocolConnection {
         // Connected!
         _setState(ConnectionState.ready);
         _startPing();
-        if (!_reconnectController.isClosed) {
-          _reconnectController.add(null);
-        }
         return;
       } catch (_) {
         // Attempt failed — loop again if still reconnecting.
@@ -608,6 +603,10 @@ class ProtocolConnection {
   }
 
   int _jitterSeed = 0;
+
+  /// Completed by [close] so a pending backoff wait gives up immediately
+  /// instead of running to term.
+  final Completer<void> _closed = Completer<void>();
 
   void _failAllPending(String reason) {
     final ex = UnavailableException(reason);

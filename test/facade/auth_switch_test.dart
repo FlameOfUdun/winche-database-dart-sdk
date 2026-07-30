@@ -1,7 +1,10 @@
 import 'dart:async';
 
 import 'package:test/test.dart';
+import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
+import 'package:winche_database/src/protocol/connection.dart'
+    show ConnectionConfig;
 
 import '../protocol/fake_channel.dart';
 import 'facade_harness.dart';
@@ -10,17 +13,17 @@ import 'facade_harness.dart';
 /// dial used, so a test can assert which auth token went onto the wire.
 class _AuthHarness {
   _AuthHarness({required FutureOr<String> Function() tokenProvider}) {
-    db = WincheDatabase.withStore(
-      ConnectionConfig(
-        uri: Uri.parse('ws://fake/documents/ws'),
-        tokenProvider: tokenProvider,
-        channelFactory: _dial,
-        sleeper: (_) => Future<void>.value(),
-        pingInterval: const Duration(hours: 1),
-        autoReconnect: false,
-      ),
-      MemoryLocalStore(),
-    );
+    db = WincheDatabase(WincheApp('auth-switch'))
+      ..debugBindStore(
+        ConnectionConfig(
+          uri: Uri.parse('ws://fake/documents/ws'),
+          tokenProvider: tokenProvider,
+          channelFactory: _dial,
+          sleeper: (_) => Future<void>.value(),
+          pingInterval: const Duration(hours: 1),
+        ),
+        MemoryLocalStore(),
+      );
   }
 
   late final WincheDatabase db;
@@ -37,7 +40,8 @@ class _AuthHarness {
     final channel = FakeChannel()..startCapture();
     channels.add(channel);
     scheduleMicrotask(
-        () => channel.serverSend({'type': 'welcome', 'connectionId': 'test'}));
+      () => channel.serverSend({'type': 'welcome', 'connectionId': 'test'}),
+    );
     channel.onClientFrame = (frame) {
       scheduleMicrotask(() => handler?.call(channel, frame));
     };
@@ -45,78 +49,30 @@ class _AuthHarness {
   }
 
   void respond(
-          FakeChannel c, Map<String, Object?> frame, Map<String, Object?> r) =>
-      c.serverSend({'type': 'response', 'id': frame['id'], 'result': r});
+    FakeChannel c,
+    Map<String, Object?> frame,
+    Map<String, Object?> r,
+  ) => c.serverSend({'type': 'response', 'id': frame['id'], 'result': r});
 
-  void respondError(FakeChannel c, Map<String, Object?> frame, String status,
-          String message) =>
-      c.serverSend({
-        'type': 'error',
-        'id': frame['id'],
-        'status': status,
-        'message': message,
-      });
+  void respondError(
+    FakeChannel c,
+    Map<String, Object?> frame,
+    String status,
+    String message,
+  ) => c.serverSend({
+    'type': 'error',
+    'id': frame['id'],
+    'status': status,
+    'message': message,
+  });
 
   Future<void> close() async {
-    await db.close();
+    await db.dispose();
     await pump();
   }
 }
 
 void main() {
-  group('namespaceResolver', () {
-    WincheDatabase dbWith(FutureOr<String> Function() resolver) =>
-        WincheDatabase(WincheDatabaseConfig(
-          uri: Uri.parse('ws://x/ws'),
-          namespaceResolver: resolver,
-          directoryResolver: () async => '/tmp',
-        ));
-
-    test('rejects a resolved value that is not a safe file-name component',
-        () async {
-      for (final bad in ['a/b', '../evil', '.', '..', '', 'a b']) {
-        final db = dbWith(() => bad);
-        // Resolved lazily, so the rejection surfaces on first store access.
-        await expectLater(
-          db.doc('users/u1').get(const GetOptions(source: Source.cache)),
-          throwsA(isA<ArgumentError>()),
-          reason: 'namespace "$bad" must be rejected',
-        );
-      }
-    });
-
-    test('is required for a persistent store', () {
-      expect(
-        () => WincheDatabase(WincheDatabaseConfig(
-          uri: Uri.parse('ws://x/ws'),
-          directoryResolver: () async => '/tmp',
-        )),
-        throwsA(isA<ArgumentError>()),
-      );
-    });
-
-    test('is rejected alongside inMemory', () {
-      expect(
-        () => WincheDatabase(WincheDatabaseConfig(
-          uri: Uri.parse('ws://x/ws'),
-          inMemory: true,
-          namespaceResolver: () => 'user-123',
-        )),
-        throwsA(isA<ArgumentError>()),
-      );
-    });
-
-    test('an in-memory store needs no namespace', () {
-      expect(
-        () => WincheDatabase(WincheDatabaseConfig(
-          uri: Uri.parse('ws://x/ws'),
-          inMemory: true,
-        )),
-        returnsNormally,
-      );
-    });
-  });
-
   group('reconnect()', () {
     test('re-dials with a freshly read token', () async {
       var token = 'token-a';
@@ -128,11 +84,14 @@ void main() {
       expect(h.tokens, ['token-a']);
 
       token = 'token-b';
-      await h.db.reconnect();
+      await h.db.onTokenChanged();
       await pump();
 
-      expect(h.tokens, ['token-a', 'token-b'],
-          reason: 'reconnect must re-read tokenProvider, not reuse the socket');
+      expect(
+        h.tokens,
+        ['token-a', 'token-b'],
+        reason: 'reconnect must re-read tokenProvider, not reuse the socket',
+      );
       expect(h.db.connectionState, ConnectionState.ready);
 
       await h.close();
@@ -162,107 +121,115 @@ void main() {
       expect(errors.single, isA<PermissionDeniedException>());
 
       token = 'fresh';
-      await h.db.reconnect();
+      await h.db.onTokenChanged();
       await pump();
 
       h.channels.last.serverSend({
         'type': 'listen.snapshot',
         'subscriptionId': 's2',
-        'documents': [wireDoc('users/u1', wireFields({'name': 'Alice'}))],
+        'documents': [
+          wireDoc('users/u1', wireFields({'name': 'Alice'})),
+        ],
         'readTime': '2026-06-08T10:00:00+00:00',
       });
       await pump();
 
-      expect(snaps.last.exists, isTrue,
-          reason: 'the permanently-failed feed must resubscribe after re-auth');
+      expect(
+        snaps.last.exists,
+        isTrue,
+        reason: 'the permanently-failed feed must resubscribe after re-auth',
+      );
       expect(snaps.last.data()!['name'], 'Alice');
 
       await sub.cancel();
       await h.close();
     });
-
-    test('throws after close()', () async {
-      final h = FacadeHarness();
-      await h.db.close();
-      expect(h.db.reconnect(), throwsA(isA<StateError>()));
-    });
   });
 
   group('write rejected by the server', () {
-    test('UNAUTHENTICATED keeps the write queued and reports SyncPaused',
-        () async {
-      final h = FacadeHarness();
-      h.handler = (f) {
-        if (f['type'] == 'write') {
-          h.respondError(f, 'UNAUTHENTICATED', 'token expired');
-        } else {
-          h.respond(f, {});
-        }
-      };
+    test(
+      'UNAUTHENTICATED keeps the write queued and reports SyncPaused',
+      () async {
+        final h = FacadeHarness();
+        h.handler = (f) {
+          if (f['type'] == 'write') {
+            h.respondError(f, 'UNAUTHENTICATED', 'token expired');
+          } else {
+            h.respond(f, {});
+          }
+        };
 
-      final events = <SyncEvent>[];
-      h.db.syncEvents.listen(events.add);
+        final events = <SyncEvent>[];
+        h.db.syncEvents.listen(events.add);
 
-      await h.db.doc('users/u1').set({'name': 'Alice'});
-      await pump();
+        await h.db.doc('users/u1').set({'name': 'Alice'});
+        await pump();
 
-      expect(await h.db.hasPendingWrites, isTrue,
-          reason: 'an auth failure says nothing about the write itself');
-      final paused = events.whereType<SyncPaused>().single;
-      expect(paused.paths, ['users/u1']);
-      expect(paused.error, isA<UnauthenticatedException>());
-      expect(events.whereType<WriteFailed>(), isEmpty);
+        expect(
+          await h.db.hasPendingWrites,
+          isTrue,
+          reason: 'an auth failure says nothing about the write itself',
+        );
+        final paused = events.whereType<SyncPaused>().single;
+        expect(paused.paths, ['users/u1']);
+        expect(paused.error, isA<UnauthenticatedException>());
+        expect(events.whereType<WriteFailed>(), isEmpty);
 
-      await h.close();
-    });
+        await h.close();
+      },
+    );
 
-    test('a repeated drain under the same dead token reports SyncPaused once',
-        () async {
-      final h = FacadeHarness();
-      h.handler = (f) {
-        if (f['type'] == 'write') {
-          h.respondError(f, 'UNAUTHENTICATED', 'token expired');
-        } else {
-          h.respond(f, {});
-        }
-      };
+    test(
+      'a repeated drain under the same dead token reports SyncPaused once',
+      () async {
+        final h = FacadeHarness();
+        h.handler = (f) {
+          if (f['type'] == 'write') {
+            h.respondError(f, 'UNAUTHENTICATED', 'token expired');
+          } else {
+            h.respond(f, {});
+          }
+        };
 
-      final events = <SyncEvent>[];
-      h.db.syncEvents.listen(events.add);
+        final events = <SyncEvent>[];
+        h.db.syncEvents.listen(events.add);
 
-      await h.db.doc('users/u1').set({'name': 'Alice'});
-      await h.db.doc('users/u2').set({'name': 'Bob'});
-      await pump();
+        await h.db.doc('users/u1').set({'name': 'Alice'});
+        await h.db.doc('users/u2').set({'name': 'Bob'});
+        await pump();
 
-      expect(events.whereType<SyncPaused>(), hasLength(1));
-      await h.close();
-    });
+        expect(events.whereType<SyncPaused>(), hasLength(1));
+        await h.close();
+      },
+    );
 
-    test('PERMISSION_DENIED drops the write but hands back its payload',
-        () async {
-      final h = FacadeHarness();
-      h.handler = (f) {
-        if (f['type'] == 'write') {
-          h.respondError(f, 'PERMISSION_DENIED', 'not your document');
-        } else {
-          h.respond(f, {});
-        }
-      };
+    test(
+      'PERMISSION_DENIED drops the write but hands back its payload',
+      () async {
+        final h = FacadeHarness();
+        h.handler = (f) {
+          if (f['type'] == 'write') {
+            h.respondError(f, 'PERMISSION_DENIED', 'not your document');
+          } else {
+            h.respond(f, {});
+          }
+        };
 
-      final events = <SyncEvent>[];
-      h.db.syncEvents.listen(events.add);
+        final events = <SyncEvent>[];
+        h.db.syncEvents.listen(events.add);
 
-      await h.db.doc('users/u1').set({'name': 'Alice'});
-      await pump();
+        await h.db.doc('users/u1').set({'name': 'Alice'});
+        await pump();
 
-      expect(await h.db.hasPendingWrites, isFalse);
-      final failed = events.whereType<WriteFailed>().single;
-      expect(failed.error, isA<PermissionDeniedException>());
-      expect(failed.writes, hasLength(1));
-      expect(failed.writes.single.path, 'users/u1');
-      expect(failed.writes.single.kind, PendingKind.set);
+        expect(await h.db.hasPendingWrites, isFalse);
+        final failed = events.whereType<WriteFailed>().single;
+        expect(failed.error, isA<PermissionDeniedException>());
+        expect(failed.writes, hasLength(1));
+        expect(failed.writes.single.path, 'users/u1');
+        expect(failed.writes.single.kind, PendingKind.set);
 
-      await h.close();
-    });
+        await h.close();
+      },
+    );
   });
 }
