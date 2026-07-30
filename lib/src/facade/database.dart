@@ -238,8 +238,15 @@ final class WincheDatabase extends WincheDatabaseService {
   /// Returns the active session, or throws [WincheUnboundException] if no
   /// identity is currently bound.
   ///
-  /// Every public member funnels through here, so the first real use of this
-  /// facade is also the first call that can mark [_started].
+  /// Every public member that *operates* on data funnels through here, so the
+  /// first real use of this facade is also the first call that can mark
+  /// [_started].
+  ///
+  /// The status getters ([connectionState], [connectionStates], [syncEvents])
+  /// deliberately do not. Observing whether a connection exists is not use: a
+  /// widget that renders a connection chip must be able to build before anyone
+  /// signs in, and reading that chip must not lock [config] or throw
+  /// [WincheUnboundException].
   _DatabaseSession _require() {
     final session = _session;
     if (session == null) throw WincheUnboundException();
