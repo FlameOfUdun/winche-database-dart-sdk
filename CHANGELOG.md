@@ -1,5 +1,97 @@
 # Changelog
 
+## 7.0.0
+
+**Breaking: this release discards every existing local store — again.** Two
+independent changes move the path, and neither migrates: `storageKey` became a
+digest in `winche_core` 0.2.0, and the store gained a per-package subdirectory.
+On first launch under 7.0 every user starts from an empty cache and **any writes
+that had not yet synced are lost, silently and with nothing in the UI to notice
+it**. Drain pending writes before upgrading if that matters to you — check
+`db.hasPendingWrites` and wait for it to clear while 6.0 is still installed.
+
+That this is the second consecutive release to say so is deliberate rather than
+careless: both path changes were landed together, in one release, precisely so
+users pay the cost once. Doing the subdirectory change later would have orphaned
+everyone a second time.
+
+### Requires `winche_core` ^0.2.0
+
+The floor moves from `^0.1.0`, which does not unify with `^0.2.0` — an app
+cannot hold `winche_database` 6.0.0 and any 0.2.0-based package at the same
+time. Verified against the published 0.2.0 from pub.dev, not a path override.
+
+### Changed
+
+- **Breaking: the local store moved to
+  `<root>/winche/<storageKey>/database/index.db`** (web: IndexedDB database
+  `winche_<storageKey>_database`). Previously `<root>/winche/<storageKey>/db.db`
+  and `winche_<storageKey>`.
+
+  The file is `index.db` rather than `db.db` to match `winche_storage`, whose
+  own index sits beside its `cache/` and `staging/` directories under the same
+  name. One layout, one filename, across the stack.
+
+  The layout is now stack-wide: every Winche package shares the per-identity
+  directory and takes one subdirectory of its own beneath it, so
+  `winche_storage` sits alongside at `<root>/winche/<storageKey>/storage/`.
+  Forgetting a user becomes a single recursive delete of
+  `<root>/winche/<storageKey>`, whatever mix of Winche packages an app uses —
+  previously that was one delete per package, each with its own naming rule to
+  remember.
+
+  `storageKey` itself also changed, in `winche_core` 0.2.0: it is now a 128-bit
+  SHA-256 digest of the identity id, rendered as 32 lowercase hex characters,
+  rather than the id itself. It cannot be collapsed by a case-insensitive
+  filesystem, it yields a usable path for *any* id a backend issues, its length
+  is fixed however long the id, and the user's id no longer lands on disk.
+
+- **Breaking: `WincheException` is now `WincheProtocolException`.** Every
+  status subclass — `PermissionDeniedException`, `UnauthenticatedException`,
+  `NotFoundException`, `AlreadyExistsException`, `FailedPreconditionException`,
+  `AbortedException`, `InvalidQueryException`, `InvalidArgumentException`,
+  `DeadlineExceededException`, `InternalException`, `UnavailableException` —
+  keeps its name and now extends it. `WincheException.fromError` is
+  `WincheProtocolException.fromError`. `status` and `details` are unchanged;
+  `message` is inherited rather than declared here.
+
+  `winche_core` 0.2.0 introduced its own `WincheException` as the root for the
+  whole stack, and two classes of that name in two libraries cannot both be
+  imported unprefixed — Dart only reconciles a duplicate name when it is
+  literally the same declaration, so keeping the name and extending core's was
+  not available. The new name is the better one regardless: `on
+  WincheProtocolException` asks "did the database backend reject this?", `on
+  WincheException` asks "did any Winche SDK fail?", and those are different
+  questions.
+
+  **Migration:** replace `on WincheException` with `on
+  WincheProtocolException` wherever you mean backend failures. Leaving it as
+  `on WincheException` still compiles, against core's root, and silently widens
+  the catch — including over `WincheUnboundException`, which you almost
+  certainly do not want handled next to a `PERMISSION_DENIED`.
+
+- **Breaking: `WincheUnboundException` moved to `winche_core`** and is not
+  re-exported here. Import `package:winche_core/winche_core.dart` for it, which
+  an app using this SDK already imports for `Winche.initializeApp`. "Nobody is
+  signed in" is a condition every Winche service shares, so it belongs where
+  every service can name it — one `catch` for an app using two Winche packages,
+  and a third package does not make it three.
+
+  It is now a `WincheException` (core's root) and therefore catchable by `on
+  WincheException`; it is still **not** a `WincheProtocolException`, because it
+  never crosses the wire. Being signed out is fixed by signing in, not by
+  handling it where server errors are handled.
+
+### Fixed
+
+- **Documentation: `.snapshots()` no longer carries a "Known gap" warning that
+  has been wrong since 6.0.0.** The README still claimed it throws a raw
+  `TypeError` while unbound. It returns normally and emits
+  `WincheUnboundException` as a stream error, which is what 6.0.0 changed and
+  what `test/facade/unbound_listen_test.dart` pins. The README now documents the
+  real behaviour with a `StreamBuilder` example, since the point of that fix was
+  that the call site is usually inside `build()`.
+
 ## 6.0.0
 
 **Breaking: this release discards every existing local store.** The on-disk layout moved from

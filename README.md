@@ -120,16 +120,37 @@ actually needs the session: `.get()`, `.set()`, `.update()`, `.delete()`,
 queries eagerly (e.g. at widget construction time) and only worry about the
 unbound state where you actually await something.
 
-> **Known gap:** `.snapshots()` does not currently follow this rule — calling
-> it while unbound throws a raw `TypeError` (a null-check failure), not
-> `WincheUnboundException`. Gate `.snapshots()` on sign-in state yourself until
-> this is fixed; do not rely on catching an exception from it while signed out.
+`.snapshots()` reports it differently, because a stream has somewhere better to
+put an error than the call site. Calling it while unbound returns normally; the
+returned stream then emits `WincheUnboundException` as a **stream error** and
+closes. That matters because the call site is typically inside a `build()`
+method, where throwing tears down the widget tree instead of reaching a
+`StreamBuilder`'s `hasError` branch.
 
-`WincheUnboundException` is deliberately **not** a `WincheException` — it never
-crosses the wire, so it does not belong in that hierarchy, and `on
-WincheException` will not catch it. Being signed out is not an error to retry or
-surface next to a `PERMISSION_DENIED`; it is fixed by signing in. Gate on
-sign-in state (your auth package's own identity/session surface, e.g. a
+```dart
+StreamBuilder(
+  stream: db.collection('tasks').snapshots(),   // safe while signed out
+  builder: (context, snapshot) {
+    if (snapshot.hasError) return const Text('Sign in to see your tasks');
+    ...
+  },
+);
+```
+
+`WincheUnboundException` lives in `winche_core` and is imported from there —
+`package:winche_core/winche_core.dart`, which an app using this SDK already
+imports for `Winche.initializeApp`. This package does not re-export it: "nobody
+is signed in" is a stack-wide condition core owns, not one `winche_database`
+defines.
+
+It is deliberately **not** a `WincheProtocolException` — it never crosses the
+wire, so it does not belong in the backend-error hierarchy, and `on
+WincheProtocolException` will not catch it. It *is* a `WincheException`, core's
+root for the whole stack, so `on WincheException` will. That is the distinction
+worth knowing: the root answers "did any Winche SDK fail?", which is rarely the
+question you want here. Being signed out is not an error to retry or surface
+next to a `PERMISSION_DENIED`; it is fixed by signing in. Gate on sign-in state
+(your auth package's own identity/session surface, e.g. a
 `WincheAuthService.activeIdentity`) rather than catching this exception at call
 sites.
 
@@ -455,16 +476,22 @@ old `snapshots()` subscription and starts a new one.
 
 ---
 
-Operations throw a `WincheException` subclass on failure:
+Operations throw a `WincheProtocolException` subclass on failure:
 `PermissionDeniedException`, `UnauthenticatedException`, `NotFoundException`,
 `AlreadyExistsException`, `FailedPreconditionException`, `AbortedException`,
 `InvalidQueryException` (with `jsonPath` / `code`), `InvalidArgumentException`,
 `DeadlineExceededException`, `InternalException`, `UnavailableException`.
 
+`WincheProtocolException` extends `WincheException`, core's root for the whole
+stack. Catch the former for "the database backend rejected this" and the latter
+for "any Winche SDK failed" — they are different questions, and the narrower
+one is usually the one you want.
+
 Calling anything before sign-in, or after a sign-out, throws
 `WincheUnboundException` instead — see
 [What throws while nobody is signed in](#what-throws-while-nobody-is-signed-in).
-It is not a `WincheException` and `on WincheException` will not catch it.
+It is a `WincheException` but not a `WincheProtocolException`, so
+`on WincheProtocolException` will not catch it.
 
 ---
 
@@ -486,11 +513,24 @@ Winche.initializeApp(
 ```
 
 Each signed-in identity gets its own store on disk, at
-`<root>/winche/<storageKey>/` (`storageKey`, not the raw identity id — see
-`WincheIdentity.storageKey` — so ids that differ only in case never collide on a
-case-insensitive filesystem). This is core's `directoryResolver`, shared by
-every Winche service under the app; `winche_database` only decides the
-`winche/<storageKey>` part beneath it.
+`<root>/winche/<storageKey>/database/index.db`. The layout is stack-wide: every
+Winche package shares the per-identity directory and takes one subdirectory of
+its own beneath it, each holding an `index.db`, so `winche_storage` sits
+alongside at `<root>/winche/<storageKey>/storage/`. Forgetting a user is
+therefore a single recursive delete of `<root>/winche/<storageKey>`, whatever
+mix of Winche packages the app uses.
+
+`storageKey`, not the raw identity id — see `WincheIdentity.storageKey`. It is
+a SHA-256 digest, so ids differing only in case cannot collide on a
+case-insensitive filesystem, any id shape yields a usable path, and the user's
+id never lands on disk.
+
+`<root>` is core's `directoryResolver`, shared by every Winche service under
+the app; `winche_database` only decides the part beneath it.
+
+On the web there are no directories, so the same three parts — scope, identity,
+package — are flattened into one IndexedDB database name,
+`winche_<storageKey>_database`.
 
 For a non-durable in-memory store (state lost on exit), set `inMemory: true` on
 `WincheDatabaseConfig` (then `directoryResolver` is never consulted):
