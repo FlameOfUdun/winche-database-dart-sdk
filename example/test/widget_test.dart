@@ -27,4 +27,55 @@ void main() {
       await tester.pump(Duration.zero);
     });
   });
+
+  // Guards the shape of the user menu in `_userSwitcher`.
+  //
+  // PopupMenuButton treats a *null* selection as a cancellation: it calls
+  // `onCanceled` and never `onSelected`. A "Sign out" item written the obvious
+  // way — `PopupMenuItem<String?>(value: null)` — therefore does nothing at all
+  // when tapped, silently, with no error anywhere. That is exactly the bug this
+  // app shipped with.
+  //
+  // The fix is to carry a non-null value that still means "no user", hence the
+  // `({String? uid})` record. This test pins that distinction so nobody
+  // "simplifies" it back.
+  testWidgets('a null menu value is swallowed; a record value is not', (
+    tester,
+  ) async {
+    Future<({bool selected, bool canceled})> tapSignOut<T>(
+      T signOutValue,
+    ) async {
+      var selected = false;
+      var canceled = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PopupMenuButton<T>(
+              onSelected: (_) => selected = true,
+              onCanceled: () => canceled = true,
+              itemBuilder: (_) => [
+                PopupMenuItem<T>(value: signOutValue, child: const Text('out')),
+              ],
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('out'));
+      await tester.pumpAndSettle();
+      return (selected: selected, canceled: canceled);
+    }
+
+    // The broken shape: null is read as "the user dismissed the menu".
+    final withNull = await tapSignOut<String?>(null);
+    expect(withNull.selected, isFalse);
+    expect(withNull.canceled, isTrue);
+
+    // The shape the app uses: a non-null record that carries a null uid.
+    final withRecord = await tapSignOut<({String? uid})>((uid: null));
+    expect(withRecord.selected, isTrue);
+    expect(withRecord.canceled, isFalse);
+  });
 }
