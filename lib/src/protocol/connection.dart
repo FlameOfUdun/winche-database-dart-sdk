@@ -29,7 +29,6 @@ final class ConnectionConfig {
     required this.uri,
     this.tokenProvider,
     this.pingInterval = const Duration(seconds: 30),
-    this.autoReconnect = true,
     this.maxBackoff = const Duration(seconds: 30),
     this.maxFrameBytes = 1 << 20,
     this.channelFactory,
@@ -46,9 +45,6 @@ final class ConnectionConfig {
 
   /// Interval for keep-alive pings. Defaults to 30 seconds.
   final Duration pingInterval;
-
-  /// Whether to automatically reconnect on unexpected disconnect.
-  final bool autoReconnect;
 
   /// Maximum backoff between reconnect attempts.
   final Duration maxBackoff;
@@ -102,8 +98,11 @@ class ProtocolConnection {
   ConnectionState get currentState => _state;
 
   void _setState(ConnectionState s) {
+    // `closed` is terminal. A retry loop scheduled just before close() must not
+    // be able to reopen a connection whose socket and controllers are gone.
+    if (_state == ConnectionState.closed && s != ConnectionState.closed) return;
     _state = s;
-    _stateController.add(s);
+    if (!_stateController.isClosed) _stateController.add(s);
   }
 
   // ---------------------------------------------------------------------------
@@ -330,8 +329,7 @@ class ProtocolConnection {
   /// Throws if the re-dial fails — [UnauthenticatedException] when the server
   /// rejects the new token, [UnavailableException] when it is unreachable. In
   /// that case the connection falls back to its normal post-drop behaviour:
-  /// the auto-reconnect loop if [ConnectionConfig.autoReconnect] is set,
-  /// otherwise `disconnected`.
+  /// the auto-reconnect loop.
   Future<void> reconnect() async {
     if (_state == ConnectionState.closed) {
       throw StateError('Cannot reconnect: connection is closed.');
@@ -356,11 +354,7 @@ class ProtocolConnection {
       await _dialOnce();
     } catch (e) {
       if (_state == ConnectionState.closed) return;
-      if (config.autoReconnect) {
-        unawaited(_reconnectLoop());
-      } else {
-        _setState(ConnectionState.disconnected);
-      }
+      unawaited(_reconnectLoop());
       rethrow;
     }
     _setState(ConnectionState.ready);
@@ -535,10 +529,9 @@ class ProtocolConnection {
       );
       _welcomeCompleter = null;
     }
-    // Start auto-reconnect loop if enabled.
-    if (config.autoReconnect) {
-      _reconnectLoop();
-    }
+    // Always recover: reconnection is not configurable, so a drop is always
+    // followed by an attempt to come back.
+    _reconnectLoop();
   }
 
   // ---------------------------------------------------------------------------
@@ -547,6 +540,7 @@ class ProtocolConnection {
 
   /// Exponential backoff reconnect loop. Runs until ready or closed.
   Future<void> _reconnectLoop() async {
+    if (_state == ConnectionState.closed) return;
     _setState(ConnectionState.reconnecting);
     var attempt = 0;
     const baseMs = 250;

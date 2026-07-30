@@ -10,8 +10,11 @@ void main() {
     db = WincheDatabase(WincheApp('offline-listener'))
       ..debugBindStore(
         ConnectionConfig(
-            uri: Uri.parse('ws://localhost:1/documents/ws'),
-            autoReconnect: false),
+          uri: Uri.parse('ws://localhost:1/documents/ws'),
+          // Reconnection is unconditional; without a small real backoff the
+          // always-failing dial would retry on the default (up-to-30s) delay.
+          sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+        ),
         FakeLocalStore(),
       );
   });

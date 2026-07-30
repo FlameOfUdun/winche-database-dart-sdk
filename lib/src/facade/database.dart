@@ -12,9 +12,6 @@ final class WincheDatabaseConfig {
   /// Keep-alive ping interval. Defaults to 30 seconds.
   final Duration pingInterval;
 
-  /// Whether to auto-reconnect on unexpected disconnect. Defaults to true.
-  final bool autoReconnect;
-
   /// Maximum backoff between reconnect attempts. Defaults to 30 seconds.
   final Duration maxBackoff;
 
@@ -41,7 +38,6 @@ final class WincheDatabaseConfig {
 
   const WincheDatabaseConfig({
     this.pingInterval = const Duration(seconds: 30),
-    this.autoReconnect = true,
     this.maxBackoff = const Duration(seconds: 30),
     this.maxFrameBytes = 1 << 20,
     this.inMemory = false,
@@ -146,7 +142,6 @@ final class WincheDatabase extends WincheDatabaseService {
           return token;
         },
         pingInterval: _config.pingInterval,
-        autoReconnect: _config.autoReconnect,
         maxBackoff: _config.maxBackoff,
         maxFrameBytes: _config.maxFrameBytes,
       ),

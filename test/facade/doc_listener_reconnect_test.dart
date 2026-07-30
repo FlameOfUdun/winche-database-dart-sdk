@@ -22,7 +22,6 @@ class DocReconnectHarness {
             return Future<void>.value();
           },
           pingInterval: const Duration(hours: 1),
-          autoReconnect: true,
         ),
         MemoryLocalStore(),
       );

@@ -15,7 +15,10 @@ WincheDatabase _offlineDb({required int maxCachedDocuments}) =>
       ..debugBindStore(
         ConnectionConfig(
           uri: Uri.parse('ws://localhost:1/documents/ws'),
-          autoReconnect: false,
+          // Reconnection is unconditional, so give the always-failing dial a
+          // small real backoff instead of the default (which grows toward
+          // maxBackoff and would slow this test down for no benefit).
+          sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
         ),
         MemoryLocalStore(),
         maxCachedDocuments: maxCachedDocuments,

@@ -64,4 +64,21 @@ void main() {
     expect(stopwatch.elapsed, lessThan(const Duration(seconds: 3)),
         reason: 'close() must not wait out the backoff delay');
   });
+
+  test('closing while retrying does not resurrect the connection', () async {
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('ws://fake/documents/ws'),
+      pingInterval: const Duration(hours: 1),
+      sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+      channelFactory: (_) => throw Exception('refused'),
+    ));
+
+    await expectLater(conn.connect(), throwsA(isA<Object>()));
+    await conn.close();
+    // Let any in-flight loop iteration run to completion.
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+
+    expect(conn.currentState, equals(ConnectionState.closed),
+        reason: 'a closed connection must stay closed');
+  });
 }

@@ -19,7 +19,6 @@ class _AuthHarness {
           channelFactory: _dial,
           sleeper: (_) => Future<void>.value(),
           pingInterval: const Duration(hours: 1),
-          autoReconnect: false,
         ),
         MemoryLocalStore(),
       );

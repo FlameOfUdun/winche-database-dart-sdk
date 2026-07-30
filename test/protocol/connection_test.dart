@@ -19,7 +19,6 @@ Future<(ProtocolConnection, FakeChannel)> _makeConnected() async {
     uri: Uri.parse('ws://fake/documents/ws'),
     channelFactory: (_) => fake,
     pingInterval: const Duration(hours: 1), // disable auto-ping in tests
-    autoReconnect: false, // these tests assert plain disconnect semantics
   ));
 
   final connectFuture = conn.connect();
@@ -210,6 +209,7 @@ void main() {
   // ---------------------------------------------------------------------------
   test('disconnect mid-request → UnavailableException', () async {
     final (conn, fake) = await _makeConnected();
+    addTearDown(conn.close);
 
     // Register expectLater BEFORE closing so the error is captured.
     final result = conn.request({'type': 'doc.get', 'path': 'users/u1'});
@@ -222,7 +222,10 @@ void main() {
     await fake.serverClose();
 
     await resultExpect;
-    expect(conn.currentState, equals(ConnectionState.disconnected));
+    // Reconnection is unconditional, so the drop is immediately followed by
+    // the auto-reconnect loop taking over — `disconnected` is transient and
+    // cannot be observed here.
+    expect(conn.currentState, equals(ConnectionState.reconnecting));
   });
 
   // ---------------------------------------------------------------------------
@@ -231,6 +234,7 @@ void main() {
   test('I2 — disconnect: listener stream stays open, receives no error',
       () async {
     final (conn, fake) = await _makeConnected();
+    addTearDown(conn.close);
 
     Object? receivedError;
     bool streamDone = false;
@@ -244,7 +248,10 @@ void main() {
     await fake.serverClose();
     await Future<void>.delayed(Duration.zero);
 
-    expect(conn.currentState, equals(ConnectionState.disconnected));
+    // Reconnection is unconditional, so the drop is immediately followed by
+    // the auto-reconnect loop taking over — `disconnected` is transient and
+    // cannot be observed here.
+    expect(conn.currentState, equals(ConnectionState.reconnecting));
     // Stream must NOT have received an error and must NOT be done.
     expect(receivedError, isNull);
     expect(streamDone, isFalse);
@@ -368,7 +375,6 @@ void main() {
         return fake;
       },
       pingInterval: const Duration(hours: 1),
-      autoReconnect: false,
     ));
 
     final connectFuture = conn.connect();
@@ -400,7 +406,6 @@ void main() {
       uri: Uri.parse('ws://fake/documents/ws'),
       channelFactory: (_) => fake,
       pingInterval: const Duration(hours: 1),
-      autoReconnect: false,
     ));
 
     final connectFuture = conn.connect();
@@ -471,9 +476,13 @@ void main() {
   test('C2 — request() after disconnect throws UnavailableException (not hang)',
       () async {
     final (conn, fake) = await _makeConnected();
+    addTearDown(conn.close);
     await fake.serverClose();
     await Future<void>.delayed(Duration.zero);
-    expect(conn.currentState, equals(ConnectionState.disconnected));
+    // Reconnection is unconditional, so the drop is immediately followed by
+    // the auto-reconnect loop taking over — `disconnected` is transient and
+    // cannot be observed here. request() fails fast on any non-ready state.
+    expect(conn.currentState, equals(ConnectionState.reconnecting));
     await expectLater(
       conn.request({'type': 'doc.get', 'path': 'a/b'}),
       throwsA(isA<UnavailableException>()),
@@ -566,7 +575,6 @@ void main() {
         return c;
       },
       pingInterval: const Duration(hours: 1),
-      autoReconnect: true,
       sleeper: (_) => Future<void>.value(), // no-op backoff
     ));
 
@@ -607,7 +615,6 @@ void main() {
         return c;
       },
       pingInterval: const Duration(hours: 1),
-      autoReconnect: true,
       sleeper: (_) => Future<void>.value(), // no-op backoff
     ));
 
