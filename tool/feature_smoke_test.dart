@@ -3,7 +3,8 @@
 // It exercises every public SDK feature and verifies behavior against the
 // access rules configured in samples/Winche.Database.Sample/Program.cs:
 //
-//   * claims are hard-coded to  uid = "user-123"  (no token needed)
+//   * the sample maps claims from the access token: uid = the token verbatim,
+//     so this script signs in with a token equal to its uid
 //   * rule:  match userData/{userId}/{document=**}  allow All if auth.uid == userId
 //
 // So every operation under  userData/user-123/...  is ALLOWED and everything
@@ -22,7 +23,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:winche_core/testing.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
@@ -30,7 +30,32 @@ const _defaultWs = 'ws://localhost:5183/documents/ws';
 const uid = 'user-123';
 
 late final WincheDatabase db;
-late final ScriptedAuthService auth;
+late final SmokeAuth auth;
+
+/// Stands in for a real auth backend.
+///
+/// The token must equal the uid: the sample server maps `uid` straight from the
+/// access token, so a token in any other shape (such as
+/// `ScriptedAuthService`'s `token-<id>-<rotation>`) would authenticate as a
+/// different principal and every rule check below would deny.
+final class SmokeAuth extends WincheAuthService {
+  SmokeAuth(super.app);
+
+  WincheIdentity? _identity;
+
+  @override
+  WincheIdentity? get activeIdentity => _identity;
+
+  @override
+  Future<String?> getAuthToken({bool forceRefresh = false}) async =>
+      _identity?.id;
+
+  void announce(WincheIdentity? identity) {
+    _identity = identity;
+    notifyIdentityChanged(identity);
+  }
+}
+
 final runId = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
 
 int _pass = 0;
@@ -132,19 +157,18 @@ Future<String> _await(String? Function() probe,
 Future<void> main(List<String> args) async {
   final wsUrl = args.isNotEmpty ? args.first : _defaultWs;
 
-  // winche_database has no sign-in surface of its own; the sample server
-  // hard-codes uid = "user-123" and ignores the token, so a ScriptedAuthService
-  // stands in for a real auth backend.
+  // winche_database has no sign-in surface of its own, so SmokeAuth stands in
+  // for a real auth backend and hands core a token equal to the uid.
   Winche.initializeApp(options: WincheOptions(databaseEndpoint: Uri.parse(wsUrl)));
   db = WincheDatabase.instance..config = const WincheDatabaseConfig(inMemory: true);
-  auth = ScriptedAuthService(Winche.app);
+  auth = SmokeAuth(Winche.app);
   auth.announce(WincheIdentity(uid));
   await Winche.app.settled;
   _initSync();
 
   print('Winche SDK feature smoke test');
   print('  server : $wsUrl');
-  print('  uid    : $uid (hard-coded server-side)');
+  print('  uid    : $uid (sent as the access token)');
   print('  runId  : $runId');
 
   // A unique subcollection per run keeps query results isolated and cleanup easy.

@@ -35,15 +35,15 @@ dependencies:
   winche_database:
     path: ../
 
-  # Path dependency until winche_core is published (same as winche_database's
-  # own dependency in ../pubspec.yaml). Needed directly here for
-  # Winche.initializeApp / WincheOptions and ScriptedAuthService.
-  winche_core:
-    path: ../../winche_core
+  # Needed directly here for Winche.initializeApp / WincheOptions. Must resolve
+  # to the same source as winche_database's own dependency — a path dep here
+  # against a hosted one there is a version-solving conflict, not two copies.
+  winche_core: ^0.1.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:
