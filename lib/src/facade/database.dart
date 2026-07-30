@@ -118,7 +118,6 @@ final class WincheDatabase extends WincheDatabaseService {
   final _connectionRelay =
       StatusRelay<ConnectionState>(ConnectionState.disconnected);
   final _syncRelay = EventRelay<SyncEvent>();
-  final _reconnectRelay = EventRelay<void>();
 
   @override
   Future<void> onSessionChanged(WincheSession? session) async {
@@ -166,7 +165,6 @@ final class WincheDatabase extends WincheDatabaseService {
   _DatabaseSession? _clearSession() {
     _connectionRelay.detach(finalValue: ConnectionState.disconnected);
     _syncRelay.detach();
-    _reconnectRelay.detach();
     final previous = _session;
     _session = null;
     _started = false;
@@ -199,7 +197,6 @@ final class WincheDatabase extends WincheDatabaseService {
 
     _connectionRelay.attach(_session!.transport.connectionStates);
     _syncRelay.attach(_session!.sync.events);
-    _reconnectRelay.attach(_session!.transport.reconnects);
   }
 
   /// Binds a session over an explicitly supplied [store], bypassing the store
@@ -232,8 +229,8 @@ final class WincheDatabase extends WincheDatabaseService {
     final session = _session;
     if (session == null) return;
     // From 5.0's reconnect(): clear the latches before re-dialling, so the
-    // `reconnects` event the successful dial emits finds every feed willing to
-    // resubscribe.
+    // transition to `ready` the successful dial emits finds every feed willing
+    // to resubscribe.
     for (final l in session.listeners) {
       l._clearPermanentFailure();
     }
@@ -310,10 +307,6 @@ final class WincheDatabase extends WincheDatabaseService {
   /// Stream of sync progress/conflict events as the write queue drains.
   /// Survives session swaps.
   Stream<SyncEvent> get syncEvents => _syncRelay.stream;
-
-  /// Emits each time the underlying connection reconnects. Survives session
-  /// swaps.
-  Stream<void> get reconnects => _reconnectRelay.stream;
 
   /// The current connection state.
   ConnectionState get connectionState => _require().transport.connectionState;
@@ -450,7 +443,6 @@ final class WincheDatabase extends WincheDatabaseService {
     _session = null;
     await _connectionRelay.close();
     await _syncRelay.close();
-    await _reconnectRelay.close();
     await super.dispose(); // always last
   }
 }

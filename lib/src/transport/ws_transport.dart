@@ -9,9 +9,9 @@ final class WsTransport implements Transport {
   ProtocolConnection? _connection;
   StreamSubscription<ConnectionState>? _stateForward;
 
-  // Stable, transport-owned level signal: survives ProtocolConnection's in-place
-  // reconnects because we never replace the connection instance, and hands every
-  // subscriber the current state so nobody has to seed themselves.
+  // Stable, transport-owned level signal: survives ProtocolConnection's
+  // in-place reconnects because we never replace the connection instance, and
+  // hands every subscriber the current state so nobody has to seed themselves.
   final ValueRelay<ConnectionState> _states =
       ValueRelay<ConnectionState>(ConnectionState.connecting);
 
@@ -25,17 +25,6 @@ final class WsTransport implements Transport {
   Stream<ServerFrame> listenEvents(String subscriptionId) async* {
     final connection = await _ensureConnected();
     yield* connection.listenEvents(subscriptionId);
-  }
-
-  @override
-  Stream<void> get reconnects async* {
-    final ProtocolConnection connection;
-    try {
-      connection = await _ensureConnected();
-    } catch (_) {
-      return;
-    }
-    yield* connection.reconnects;
   }
 
   @override
@@ -56,9 +45,9 @@ final class WsTransport implements Transport {
   /// [request] fails fast with [UnavailableException] on any non-ready state,
   /// so callers still see the failure immediately.
   ///
-  /// The connection reconnects itself in place (PROTOCOL §7); we never
-  /// close+recreate it here — doing so previously orphaned listener streams
-  /// during the reconnect window.
+  /// The connection recovers itself in place via its own retry loop
+  /// (PROTOCOL §7); we never close+recreate it here — doing so previously
+  /// orphaned listener streams during that recovery window.
   Future<ProtocolConnection> _ensureConnected() {
     if (_disposed) {
       return Future.error(

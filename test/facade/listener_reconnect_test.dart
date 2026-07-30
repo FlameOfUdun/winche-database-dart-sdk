@@ -8,7 +8,7 @@ import '../protocol/fake_channel.dart';
 import 'facade_harness.dart' show pump, wireDoc, wireFields;
 
 /// A facade harness that mints a fresh [FakeChannel] on every dial, so the
-/// auto-reconnect loop reconnects onto a new socket (the single-channel
+/// auto-reconnect loop re-dials onto a new socket (the single-channel
 /// [FacadeHarness] reuses one closed channel and cannot reconnect).
 ///
 /// Each dialed channel sends its own `welcome` on dial (as the backend does on
@@ -126,7 +126,7 @@ void main() {
     // Cache-first (empty) emit + the server snapshot.
     expect(events.last.docs.map((d) => d.id), ['u1']);
 
-    // The socket drops → the connection auto-reconnects onto a fresh channel.
+    // The socket drops → the connection auto-reconnect re-dials a fresh channel.
     await h.channels[0].serverClose();
     await pump(12);
 
@@ -158,7 +158,7 @@ void main() {
   });
 
   test(
-      'reconnect emits on the reconnects stream and resubscribe is local '
+      'reconnect resubscribe is local '
       '(no unlisten to the dead socket)', () async {
     final h = ReconnectHarness();
     String subIdFor(FakeChannel c) => 'sub-${h.channels.indexOf(c)}';

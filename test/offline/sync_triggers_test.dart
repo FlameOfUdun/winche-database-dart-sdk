@@ -15,7 +15,6 @@ import 'package:winche_database/src/transport/transport.dart';
 import 'fake_local_store.dart';
 
 class _FakeTransport implements Transport {
-  final StreamController<void> _reconnects = StreamController<void>.broadcast();
   final ValueRelay<ConnectionState> _states =
       ValueRelay<ConnectionState>(ConnectionState.ready);
   final List<Map<String, Object?>> requests = [];
@@ -33,20 +32,15 @@ class _FakeTransport implements Transport {
   Stream<ServerFrame> listenEvents(String s) => const Stream.empty();
   @override
   void releaseSubscription(String s) {}
-  @override
-  Stream<void> get reconnects => _reconnects.stream;
 
   @override
   Stream<ConnectionState> get connectionStates => _states.stream;
 
   /// Simulates a reconnect: the state briefly leaves `ready` and comes back,
   /// exactly as `WsTransport` transitions `connectionStates` around a real
-  /// reconnect, alongside firing the (still-supported) `reconnects` event.
-  void fireReconnect() {
-    _states.add(ConnectionState.reconnecting);
-    _states.add(ConnectionState.ready);
-    _reconnects.add(null);
-  }
+  /// reconnect. `ready` is de-duplicated by `ValueRelay`, so cycling through
+  /// `reconnecting` is what makes the second `ready` observable at all.
+  void setState(ConnectionState s) => _states.add(s);
 
   @override
   ConnectionState get connectionState => _states.value;
@@ -86,8 +80,6 @@ class _StateTransport implements Transport {
   @override
   void releaseSubscription(String s) {}
   @override
-  Stream<void> get reconnects => const Stream<void>.empty();
-  @override
   Stream<ConnectionState> get connectionStates => _states.stream;
   @override
   ConnectionState get connectionState => _states.value;
@@ -117,18 +109,19 @@ void main() {
   test('reconnect triggers a drain', () async {
     await queue.enqueue(SetWrite('users/u1', {'n': const IntegerValue(1)}),
         localCommitTime: DateTime.utc(2026));
-    transport.fireReconnect();
+    // `ready` is de-duplicated by ValueRelay, so trigger the drain by cycling
+    // the state away from `ready` and back, exactly as a real reconnect does.
+    transport.setState(ConnectionState.reconnecting);
+    transport.setState(ConnectionState.ready);
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(await queue.hasPending(), isFalse);
   });
 
   // A process restart: the writes were queued in a previous session and are
-  // already on disk when the controller starts. Nothing will fire `reconnects`
-  // for them — WsTransport exposes it as an `async*` that awaits the connection
-  // before `yield*`-ing its events, so the event fired as that first connection
-  // completes lands before the subscription attaches and is dropped (the
-  // controller has no replay). Without an explicit kick, such a queue sits
-  // pending forever behind a perfectly healthy socket.
+  // already on disk when the controller starts. Because connectionStates is a
+  // level, start() itself observes the current `ready` state immediately and
+  // drains — no separate kick or transition is needed for a queue that was
+  // already pending before the controller ever subscribed.
   test('a queue restored from disk drains at start, with no reconnect event',
       () async {
     final restored = FakeLocalStore();

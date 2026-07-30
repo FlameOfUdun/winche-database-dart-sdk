@@ -22,8 +22,6 @@ class _OfflineTransport implements Transport {
   Stream<ServerFrame> listenEvents(String s) => const Stream.empty();
   @override
   void releaseSubscription(String s) {}
-  @override
-  Stream<void> get reconnects => const Stream.empty();
 
   @override
   Stream<ConnectionState> get connectionStates =>

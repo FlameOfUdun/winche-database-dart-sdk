@@ -51,8 +51,9 @@ class _DatabaseSession {
 
     // Dial as soon as a session exists, rather than waiting for a read, a
     // listener, or a queued write. The SDK already behaved this way, but only as
-    // a side effect of subscribing to the `reconnects` async* getter; making it
-    // explicit is what lets that getter be deleted.
+    // a side effect of subscribing to the transport's now-deleted event-stream
+    // getter (formerly the mechanism for surfacing successful re-dials); making
+    // it explicit is what let that getter be deleted.
     //
     // Fire-and-forget on purpose: the auto-reconnect loop owns recovery, so a
     // failure here has no caller to report to. Swallowed so it cannot surface as

@@ -27,8 +27,8 @@ void main() {
     expect(seen, equals(['connecting', 'ready']));
   });
 
-  // The whole point: this is what `reconnects` could not do, and why every
-  // consumer had to seed itself.
+  // The whole point: this is what the old edge-triggered signal could not do,
+  // and why every consumer had to seed itself.
   test('a LATE subscriber receives the current value, not nothing', () async {
     final relay = ValueRelay<String>('connecting');
     addTearDown(relay.close);

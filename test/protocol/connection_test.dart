@@ -551,9 +551,9 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // Any server close → reconnects (including formerly-terminal 4413)
+  // Any server close → triggers reconnect (including formerly-terminal 4413)
   // ---------------------------------------------------------------------------
-  test('server close with any code (1013) → reconnects', () async {
+  test('server close with any code (1013) → triggers reconnect', () async {
     var dialCount = 0;
     final channels = <FakeChannel>[];
 
@@ -593,7 +593,7 @@ void main() {
     await conn.close();
   });
 
-  test('server close with formerly-terminal code (4413) → reconnects',
+  test('server close with formerly-terminal code (4413) → triggers reconnect',
       () async {
     var dialCount = 0;
     final channels = <FakeChannel>[];

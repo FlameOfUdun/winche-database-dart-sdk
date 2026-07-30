@@ -17,18 +17,15 @@ abstract interface class Transport {
   /// Closes and removes the listener stream for [subscriptionId].
   void releaseSubscription(String subscriptionId);
 
-  /// Emits each time the underlying connection reconnects.
-  Stream<void> get reconnects;
-
   /// The current connection state.
   ConnectionState get connectionState;
 
-  /// A stable stream of connection-state transitions that survives socket
-  /// reconnects (does not complete on disconnect).
+  /// A stable stream of connection-state transitions that survives a dropped
+  /// and re-dialled socket (does not complete on disconnect).
   Stream<ConnectionState> get connectionStates;
 
   /// Drops the current socket and re-dials, re-reading the auth token.
-  /// Subscriptions resume in place and [reconnects] fires on success.
+  /// Subscriptions resume in place.
   Future<void> reconnect();
 
   /// Closes the transport and its underlying connection.

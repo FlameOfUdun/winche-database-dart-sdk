@@ -106,11 +106,6 @@ class ProtocolConnection {
     _stateController.add(s);
   }
 
-  /// Emits a void event each time a reconnect succeeds.
-  Stream<void> get reconnects => _reconnectController.stream;
-  final StreamController<void> _reconnectController =
-      StreamController<void>.broadcast();
-
   // ---------------------------------------------------------------------------
   // Internal
   // ---------------------------------------------------------------------------
@@ -328,9 +323,9 @@ class ProtocolConnection {
   ///
   /// This is the only way to push a rotated auth token onto a live connection:
   /// the token is a query parameter on the WebSocket upgrade, so it is fixed for
-  /// the lifetime of a socket. Listener streams and the [reconnects] signal are
+  /// the lifetime of a socket. Listener streams and the state stream are
   /// preserved, so subscriptions resume in place exactly as after a network
-  /// drop, and [reconnects] fires on success.
+  /// drop, and the state returns to `ready` on success.
   ///
   /// Throws if the re-dial fails — [UnauthenticatedException] when the server
   /// rejects the new token, [UnavailableException] when it is unreachable. In
@@ -370,7 +365,6 @@ class ProtocolConnection {
     }
     _setState(ConnectionState.ready);
     _startPing();
-    if (!_reconnectController.isClosed) _reconnectController.add(null);
   }
 
   /// One dial + handshake on the reconnect path (shared by [reconnect] and
@@ -417,7 +411,6 @@ class ProtocolConnection {
     } catch (_) {
       // Ignore errors from closing a dead socket.
     }
-    if (!_reconnectController.isClosed) await _reconnectController.close();
     await _stateController.close();
   }
 
@@ -586,9 +579,6 @@ class ProtocolConnection {
         // Connected!
         _setState(ConnectionState.ready);
         _startPing();
-        if (!_reconnectController.isClosed) {
-          _reconnectController.add(null);
-        }
         return;
       } catch (_) {
         // Attempt failed — loop again if still reconnecting.

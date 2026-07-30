@@ -84,9 +84,5 @@ void main() {
       h.db.dispose();
       await pump();
     });
-
-    test('reconnects stream is exposed', () {
-      expect(h.db.reconnects, isA<Stream<void>>());
-    });
   });
 }

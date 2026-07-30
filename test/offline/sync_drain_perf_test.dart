@@ -73,8 +73,6 @@ class _OkTransport implements Transport {
   @override
   void releaseSubscription(String s) {}
   @override
-  Stream<void> get reconnects => const Stream.empty();
-  @override
   Stream<ConnectionState> get connectionStates =>
       const Stream<ConnectionState>.empty();
   @override
@@ -97,8 +95,6 @@ class _CallbackTransport implements Transport {
   Stream<ServerFrame> listenEvents(String s) => const Stream.empty();
   @override
   void releaseSubscription(String s) {}
-  @override
-  Stream<void> get reconnects => const Stream.empty();
   @override
   Stream<ConnectionState> get connectionStates =>
       const Stream<ConnectionState>.empty();

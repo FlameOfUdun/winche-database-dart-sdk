@@ -9,7 +9,7 @@ import 'facade_harness.dart' show pump, wireDoc, wireFields;
 
 /// A reconnect harness for doc.snapshots() tests, mirroring [ReconnectHarness]
 /// from listener_reconnect_test.dart. Mints a fresh [FakeChannel] on every dial
-/// so the auto-reconnect loop reconnects onto a new socket.
+/// so the auto-reconnect loop re-dials onto a new socket.
 class DocReconnectHarness {
   DocReconnectHarness() {
     db = WincheDatabase(WincheApp('doc-listener-reconnect'))
