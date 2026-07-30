@@ -28,14 +28,9 @@ time. Verified against the published 0.2.0 from pub.dev, not a path override.
   `winche_<storageKey>_database`). Previously `<root>/winche/<storageKey>/db.db`
   and `winche_<storageKey>`.
 
-  The file is `index.db` rather than `db.db` to match `winche_storage`, whose
-  own index sits beside its `cache/` and `staging/` directories under the same
-  name. One layout, one filename, across the stack.
-
-  The layout is now stack-wide: every Winche package shares the per-identity
-  directory and takes one subdirectory of its own beneath it, so
-  `winche_storage` sits alongside at `<root>/winche/<storageKey>/storage/`.
-  Forgetting a user becomes a single recursive delete of
+  The layout follows a stack-wide convention: an identity gets one directory,
+  and each Winche package takes a subdirectory of its own beneath it holding an
+  `index.db`. Forgetting a user becomes a single recursive delete of
   `<root>/winche/<storageKey>`, whatever mix of Winche packages an app uses —
   previously that was one delete per package, each with its own naming rule to
   remember.
@@ -380,8 +375,8 @@ are lost**. Drain pending writes before upgrading if that matters to you.
 ## 2.0.0
 
 - **Breaking:** `WincheDatabase` now takes a single `WincheDatabaseConfig` —
-  connection options + local-store selection + conflict policy in one object,
-  mirroring `winche_storage`'s `WincheStorageConfig`. Replaces the previous
+  connection options + local-store selection + conflict policy in one object.
+  Replaces the previous
   `WincheDatabase(ConnectionConfig, {store, inMemory, ...})` constructor.
 - **Breaking:** persistence is now **on by default** (Hive). On native platforms a
   `directoryResolver` is required; the Hive directory is resolved **lazily** on

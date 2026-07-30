@@ -515,10 +515,9 @@ Winche.initializeApp(
 Each signed-in identity gets its own store on disk, at
 `<root>/winche/<storageKey>/database/index.db`. The layout is stack-wide: every
 Winche package shares the per-identity directory and takes one subdirectory of
-its own beneath it, each holding an `index.db`, so `winche_storage` sits
-alongside at `<root>/winche/<storageKey>/storage/`. Forgetting a user is
-therefore a single recursive delete of `<root>/winche/<storageKey>`, whatever
-mix of Winche packages the app uses.
+its own beneath it, each holding an `index.db`. Forgetting a user is therefore
+a single recursive delete of `<root>/winche/<storageKey>`, whatever mix of
+Winche packages the app uses.
 
 `storageKey`, not the raw identity id — see `WincheIdentity.storageKey`. It is
 a SHA-256 digest, so ids differing only in case cannot collide on a
