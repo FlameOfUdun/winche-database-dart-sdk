@@ -122,6 +122,17 @@ are lost**. Drain pending writes before upgrading if that matters to you.
 - **A disposed database releases its status subscribers.** The relay behind
   `connectionStates` forwarded values and errors but not completion, so disposal
   left every subscriber attached to an open controller.
+- **Breaking: `snapshots()` reports an unbound database as a stream error**
+  rather than throwing at the call site. It resolved the session in a
+  constructor initializer list, so it could only fail by throwing — and its call
+  site is typically a `StreamBuilder` inside `build()`, where an identity change
+  landing between a rebuild and the app updating its own state tore down the
+  widget tree instead of reaching the `hasError` branch. It was also the only
+  entry point that behaved this way: `get`/`set`/`update`/`delete` are `async`,
+  so an unbound database rejects their Future. The session is now bound when the
+  stream is listened to. A *disposed* session still completes with `done` — the
+  documented signal for an identity swap under a live listener — and only the
+  absence of one is an error.
 
 ## 5.0.0
 
