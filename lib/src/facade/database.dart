@@ -47,18 +47,37 @@ final class WincheDatabaseConfig {
   });
 }
 
-/// `<root>/winche/<storageKey>` — where this identity's store lives.
+/// `<root>/winche/<storageKey>/database` — where this identity's store lives.
 ///
-/// `storageKey`, not `id`: on NTFS and default macOS APFS `User1` and `user1`
-/// are the same directory, and backends do issue case-sensitive ids.
+/// Every Winche package puts its on-disk state under one directory per
+/// identity and takes a subdirectory of its own beneath it — `database` here,
+/// `storage` for `winche_storage`. Forgetting a user is then a single
+/// recursive delete of `<root>/winche/<storageKey>` that takes every
+/// package's state with it.
+///
+/// `storageKey`, not `id`: it is a digest, so it cannot be collapsed by a
+/// case-insensitive filesystem (`User1` and `user1` are one directory on NTFS
+/// and default macOS APFS, and backends do issue case-sensitive ids), it is a
+/// fixed 32 characters however long the id, and it keeps the id off disk.
 @visibleForTesting
 String storeDirectoryFor(String root, WincheIdentity identity) =>
-    '$root/winche/${identity.storageKey}';
+    '$root/winche/${identity.storageKey}/database';
+
+/// The sembast database name inside [storeDirectoryFor], which becomes
+/// `index.db` on disk — sembast appends the extension.
+///
+/// Matches `winche_storage`, whose own index is `index.db` beside its `cache/`
+/// and `staging/` directories.
+@visibleForTesting
+const String storeFileName = 'index';
 
 /// The IndexedDB database name on the web, where there is no filesystem.
+///
+/// Names the same three parts as [storeDirectoryFor] — scope, identity,
+/// package — flattened, because IndexedDB has no directories to nest in.
 @visibleForTesting
 String webDatabaseNameFor(WincheIdentity identity) =>
-    'winche_${identity.storageKey}';
+    'winche_${identity.storageKey}_database';
 
 /// The entry point for the Winche Database Dart SDK.
 ///
@@ -268,7 +287,7 @@ final class WincheDatabase extends WincheDatabaseService {
 
     return LazyLocalStore(
       () async => SembastLocalStore.open(
-        _kIsWeb ? webDatabaseNameFor(session.identity) : 'db',
+        _kIsWeb ? webDatabaseNameFor(session.identity) : storeFileName,
         directory: _kIsWeb
             ? null
             : storeDirectoryFor(await root!(), session.identity),
