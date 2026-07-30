@@ -21,9 +21,34 @@
 //   dart run tool/resume_e2e.dart [ws://localhost:5183/documents/ws] [storeDir]
 import 'dart:io';
 
-import 'package:winche_core/testing.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
+
+/// Auth whose token *is* the uid.
+///
+/// Not `ScriptedAuthService`: that emits `token-<id>-<rotation>`, and the
+/// sample server maps `uid` from the access token verbatim. Its uid would be
+/// `token-user-123-0`, which never matches the rule
+/// `userData/{userId} allow if auth.uid == userId`, so every operation here
+/// came back `PERMISSION_DENIED`. `tool/feature_smoke_test.dart` carries its
+/// own copy of this for the same reason.
+final class ResumeAuth extends WincheAuthService {
+  ResumeAuth(super.app);
+
+  WincheIdentity? _identity;
+
+  @override
+  WincheIdentity? get activeIdentity => _identity;
+
+  @override
+  Future<String?> getAuthToken({bool forceRefresh = false}) async =>
+      _identity?.id;
+
+  void announce(WincheIdentity? identity) {
+    _identity = identity;
+    notifyIdentityChanged(identity);
+  }
+}
 
 Future<void> main(List<String> args) async {
   final wsUrl =
@@ -44,7 +69,7 @@ Future<void> main(List<String> args) async {
     ),
   );
   final db = WincheDatabase.instance;
-  final auth = ScriptedAuthService(Winche.app);
+  final auth = ResumeAuth(Winche.app);
 
   print('resume e2e  dir=$dir  path=$path');
 
