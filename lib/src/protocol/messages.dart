@@ -3,9 +3,6 @@ import '../core/values.dart';
 import 'writes.dart';
 import 'query_spec.dart';
 
-// ---------------------------------------------------------------------------
-// WireDocument
-// ---------------------------------------------------------------------------
 
 /// A document as received from the server wire format (PROTOCOL §2.1).
 ///
@@ -75,9 +72,7 @@ class WireDocument {
       };
 }
 
-// ---------------------------------------------------------------------------
 // WireChange — listener delta change
-// ---------------------------------------------------------------------------
 
 /// The kind of a change in a listen.delta frame (PROTOCOL §7.6).
 enum ChangeKind { added, modified, removed, deleted }
@@ -114,9 +109,6 @@ class WireChange {
   }
 }
 
-// ---------------------------------------------------------------------------
-// ServerFrame hierarchy
-// ---------------------------------------------------------------------------
 
 /// Sealed base class for all server-sent frames (PROTOCOL §7).
 sealed class ServerFrame {
@@ -297,10 +289,8 @@ final class UnknownFrame extends ServerFrame {
   final Map<String, Object?> raw;
 }
 
-// ---------------------------------------------------------------------------
 // Client frame builders — plain functions returning Map<String, Object?>
 // (PROTOCOL §7)
-// ---------------------------------------------------------------------------
 
 /// `{"type": "ping", "id": "..."}` (PROTOCOL §7.4)
 Map<String, Object?> pingFrame(String id) => {'type': 'ping', 'id': id};

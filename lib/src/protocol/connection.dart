@@ -86,9 +86,6 @@ class ProtocolConnection {
     return Future<void>.delayed(d);
   }
 
-  // ---------------------------------------------------------------------------
-  // State
-  // ---------------------------------------------------------------------------
 
   ConnectionState _state = ConnectionState.connecting;
   final StreamController<ConnectionState> _stateController =
@@ -105,9 +102,6 @@ class ProtocolConnection {
     if (!_stateController.isClosed) _stateController.add(s);
   }
 
-  // ---------------------------------------------------------------------------
-  // Internal
-  // ---------------------------------------------------------------------------
 
   WebSocketChannel? _channel;
   StreamSubscription<Object?>? _sub;
@@ -149,9 +143,6 @@ class ProtocolConnection {
   Timer? _pingTimer;
   int _requestsInFlight = 0;
 
-  // ---------------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------------
 
   /// Returns the dial URI with the current auth token (if any) added as the
   /// `access_token` query parameter (auth is at the WS upgrade — there is no
@@ -408,9 +399,6 @@ class ProtocolConnection {
     await _stateController.close();
   }
 
-  // ---------------------------------------------------------------------------
-  // Send queue
-  // ---------------------------------------------------------------------------
 
   void _enqueueSend(Map<String, Object?> frame) {
     _sendQueue.add(frame);
@@ -440,9 +428,6 @@ class ProtocolConnection {
     _drainQueue();
   }
 
-  // ---------------------------------------------------------------------------
-  // Incoming frame handling
-  // ---------------------------------------------------------------------------
 
   void _onFrame(Object? data) {
     if (data is! String) {
@@ -534,9 +519,6 @@ class ProtocolConnection {
     _reconnectLoop();
   }
 
-  // ---------------------------------------------------------------------------
-  // Reconnect loop
-  // ---------------------------------------------------------------------------
 
   /// Exponential backoff reconnect loop. Runs until ready or closed.
   Future<void> _reconnectLoop() async {
@@ -626,9 +608,6 @@ class ProtocolConnection {
     _listeners.clear();
   }
 
-  // ---------------------------------------------------------------------------
-  // Ping
-  // ---------------------------------------------------------------------------
 
   void _startPing() {
     _pingTimer = Timer.periodic(config.pingInterval, (_) {

@@ -101,7 +101,6 @@ Value _mergeValue(Value? existing, Value incoming) {
   return incoming;
 }
 
-// --- Transforms ---
 void _applyTransforms(
     Map<String, Value> fields, List<FieldTransform>? transforms, DateTime now) {
   if (transforms == null) return;

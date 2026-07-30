@@ -368,9 +368,7 @@ void _handleSentinel(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Write staging — shared by references / transaction / write_batch
-// ---------------------------------------------------------------------------
 
 /// Builds a [SetWrite] from already-mapped [data].
 SetWrite stageSet(String path, Map<String, Object?> data,

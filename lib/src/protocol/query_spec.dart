@@ -1,8 +1,5 @@
 import '../core/values.dart';
 
-// ---------------------------------------------------------------------------
-// Filter operators
-// ---------------------------------------------------------------------------
 
 /// Field filter operators matching PROTOCOL §4.3 wire strings exactly.
 ///
@@ -58,9 +55,6 @@ extension UnaryOpWire on UnaryOp {
       };
 }
 
-// ---------------------------------------------------------------------------
-// FilterSpec
-// ---------------------------------------------------------------------------
 
 /// Immutable filter specification, producing wire JSON per PROTOCOL §4.2.
 sealed class FilterSpec {
@@ -155,9 +149,6 @@ final class _CompareFilter extends FilterSpec {
       };
 }
 
-// ---------------------------------------------------------------------------
-// OrderSpec
-// ---------------------------------------------------------------------------
 
 /// Sort direction.
 enum SortDirection { asc, desc }
@@ -175,9 +166,6 @@ class OrderSpec {
       };
 }
 
-// ---------------------------------------------------------------------------
-// CursorSpec
-// ---------------------------------------------------------------------------
 
 /// Cursor for start/end pagination bounds (PROTOCOL §4.5).
 class CursorSpec {
@@ -194,9 +182,6 @@ class CursorSpec {
       };
 }
 
-// ---------------------------------------------------------------------------
-// QuerySpec
-// ---------------------------------------------------------------------------
 
 /// Immutable query specification (PROTOCOL §4.1).
 ///

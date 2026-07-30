@@ -401,7 +401,6 @@ final class WincheDatabase extends WincheDatabaseService {
   }) async {
     final rng = Random();
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
-      // Begin transaction.
       final beginResult = await _transport.request(txBeginFrame(''));
       final transactionId = beginResult['transactionId'] as String;
       final tx = Transaction._(this, transactionId);
@@ -436,7 +435,6 @@ final class WincheDatabase extends WincheDatabaseService {
         return result;
       }
 
-      // Commit buffered writes.
       try {
         await tx._commit();
         return result;

@@ -56,7 +56,6 @@ class SembastLocalStore implements LocalStore {
     return v;
   }
 
-  // --- Documents ---
 
   @override
   Future<void> putDocument(String path, Map<String, Object?> record) =>
@@ -96,7 +95,6 @@ class SembastLocalStore implements LocalStore {
     return [for (final r in records) _castMap(r.value)];
   }
 
-  // --- Pending write queue ---
 
   @override
   Future<int> nextPendingSeq() async {
@@ -122,7 +120,6 @@ class SembastLocalStore implements LocalStore {
   @override
   Future<void> removePending(int seq) => _pending.record(seq).delete(_db);
 
-  // --- Metadata ---
 
   @override
   Future<void> putMeta(String key, Object? value) =>
@@ -131,7 +128,6 @@ class SembastLocalStore implements LocalStore {
   @override
   Future<Object?> getMeta(String key) => _meta.record(key).get(_db);
 
-  // --- Lifecycle ---
 
   @override
   Future<void> clear() async {

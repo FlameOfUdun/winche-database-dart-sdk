@@ -28,11 +28,9 @@ abstract interface class LocalStore {
   Future<List<Map<String, Object?>>> allPending();
   Future<void> removePending(int seq);
 
-  // --- Metadata ---
   Future<void> putMeta(String key, Object? value);
   Future<Object?> getMeta(String key);
 
-  // --- Lifecycle ---
   Future<void> clear();
   Future<void> close();
 }

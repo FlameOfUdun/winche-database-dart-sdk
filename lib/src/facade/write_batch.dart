@@ -1,8 +1,6 @@
 part of '../../winche_database.dart';
 
-// ---------------------------------------------------------------------------
 // WriteBatch
-// ---------------------------------------------------------------------------
 
 /// Accumulates multiple write operations and commits them atomically.
 ///

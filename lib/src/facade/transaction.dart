@@ -68,9 +68,7 @@ final class Transaction {
         stageDelete(ref.path, cascade: cascade, precondition: precondition));
   }
 
-  // ---------------------------------------------------------------------------
   // Internal
-  // ---------------------------------------------------------------------------
 
   void _assertNoWrites(String operation) {
     if (_writesStarted) {

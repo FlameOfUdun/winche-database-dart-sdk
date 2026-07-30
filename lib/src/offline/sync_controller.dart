@@ -257,7 +257,6 @@ class SyncController {
     }
   }
 
-  // --- internals ---
 
   String _keyOf(List<PendingWrite> unit) =>
       unit.first.batchId ?? unit.first.path;
