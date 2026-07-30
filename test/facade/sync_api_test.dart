@@ -1,23 +1,23 @@
 import 'package:test/test.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
+import 'package:winche_database/src/protocol/connection.dart'
+    show ConnectionConfig;
 
 import '../offline/fake_local_store.dart';
 
 void main() {
   WincheDatabase offlineDb(LocalStore store, {ConflictPolicy? policy}) =>
-      WincheDatabase(WincheApp('sync-api'))
-        ..debugBindStore(
-          ConnectionConfig(
-            uri: Uri.parse('ws://localhost:1/documents/ws'),
-            // Reconnection is unconditional; without a small real backoff the
-            // always-failing dial would retry on the default (up-to-30s) delay.
-            sleeper: (_) =>
-                Future<void>.delayed(const Duration(milliseconds: 5)),
-          ),
-          store,
-          conflictPolicy: policy ?? ConflictPolicy.manual,
-        );
+      WincheDatabase(WincheApp('sync-api'))..debugBindStore(
+        ConnectionConfig(
+          uri: Uri.parse('ws://localhost:1/documents/ws'),
+          // Reconnection is unconditional; without a small real backoff the
+          // always-failing dial would retry on the default (up-to-30s) delay.
+          sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+        ),
+        store,
+        conflictPolicy: policy ?? ConflictPolicy.manual,
+      );
 
   test('syncEvents is a broadcast stream', () {
     final db = offlineDb(FakeLocalStore());

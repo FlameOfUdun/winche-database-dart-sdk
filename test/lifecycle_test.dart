@@ -26,13 +26,16 @@ void main() {
         'lifecycle-test',
         // A refused-fast address: onSessionChanged requires an endpoint, but
         // nothing in this group ever awaits a successful connection.
-        options: WincheOptions(databaseEndpoint: Uri.parse('ws://localhost:1/ws')),
+        options: WincheOptions(
+          databaseEndpoint: Uri.parse('ws://localhost:1/ws'),
+        ),
         hookTimeout: const Duration(seconds: 5),
       );
       auth = ScriptedAuthService(app);
       // inMemory so no filesystem is touched; set immediately after
       // construction, while the facade is still unbound (`_started` is false).
-      db = WincheDatabase(app)..config = const WincheDatabaseConfig(inMemory: true);
+      db = WincheDatabase(app)
+        ..config = const WincheDatabaseConfig(inMemory: true);
     });
 
     tearDown(() async {
@@ -90,10 +93,14 @@ void main() {
 
       expect(alice, isNotNull);
       expect(bob, isNotNull);
-      expect(bob, isNot(same(alice)),
-          reason: 'a user switch must tear down the previous identity\'s '
-              'session and build a fresh one, or bob would read alice\'s '
-              'cache and write queue');
+      expect(
+        bob,
+        isNot(same(alice)),
+        reason:
+            'a user switch must tear down the previous identity\'s '
+            'session and build a fresh one, or bob would read alice\'s '
+            'cache and write queue',
+      );
     });
 
     test('a token rotation does NOT replace it', () async {
@@ -108,7 +115,8 @@ void main() {
       expect(
         after,
         same(before),
-        reason: 'onTokenChanged must nudge the existing session, not rebuild '
+        reason:
+            'onTokenChanged must nudge the existing session, not rebuild '
             'it — rebuilding would tear down and reopen the store and socket '
             'on every token refresh instead of just re-dialling with a fresh '
             'token',
@@ -128,7 +136,8 @@ void main() {
       expect(
         done,
         isFalse,
-        reason: '`done` is terminal on a broadcast stream, so a connection '
+        reason:
+            '`done` is terminal on a broadcast stream, so a connection '
             'banner subscribed here would never update again once the '
             'stream ended — a user switch must not end it',
       );
@@ -143,8 +152,10 @@ void main() {
       // Bound but unused: `_started` is still false, so this must succeed.
       db.config = const WincheDatabaseConfig(inMemory: true);
 
-      // Any public member funnels through `_require()`, marking `_started`.
-      db.connectionState;
+      // Any operational public member funnels through `_require()`, marking
+      // `_started`. `connectionState` deliberately does not — it is a status
+      // read, not an operation, and must stay callable while unbound.
+      db.hasPendingWrites;
 
       expect(
         () => db.config = const WincheDatabaseConfig(inMemory: true),

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
+import 'package:winche_database/src/protocol/connection.dart'
+    show ConnectionConfig;
 
 import '../protocol/fake_channel.dart';
 
@@ -25,9 +27,11 @@ Future<void> pump([int times = 6]) async {
 /// `hello` handshake with a `welcome`, then routes each subsequent client
 /// request frame to [handler] (or, if unset, replies with [defaultResult]).
 class FacadeHarness {
-  FacadeHarness(
-      {LocalStore? store, int? maxCachedDocuments, int? cacheSizeBytes})
-      : channel = FakeChannel()..startCapture() {
+  FacadeHarness({
+    LocalStore? store,
+    int? maxCachedDocuments,
+    int? cacheSizeBytes,
+  }) : channel = FakeChannel()..startCapture() {
     // No auth service is registered on this app: `debugBindStore` binds a
     // session directly over the fake transport/store below, bypassing
     // identity entirely.
@@ -45,15 +49,20 @@ class FacadeHarness {
             // DocReconnectHarness, which mint a fresh channel per dial.
             if (_dialed) {
               throw StateError(
-                  'FacadeHarness has a single fake channel and cannot be '
-                  'redialed; use ReconnectHarness for reconnect tests.');
+                'FacadeHarness has a single fake channel and cannot be '
+                'redialed; use ReconnectHarness for reconnect tests.',
+              );
             }
             _dialed = true;
             // The backend sends `welcome` immediately on upgrade — there is no
             // `hello` and no in-band auth. Deferred to a microtask so it lands
             // after connect() has subscribed and armed its welcome completer.
-            scheduleMicrotask(() => channel
-                .serverSend({'type': 'welcome', 'connectionId': 'test-conn'}));
+            scheduleMicrotask(
+              () => channel.serverSend({
+                'type': 'welcome',
+                'connectionId': 'test-conn',
+              }),
+            );
             return channel;
           },
           pingInterval: const Duration(hours: 1), // disable keepalive pings
@@ -62,7 +71,8 @@ class FacadeHarness {
           // spin it hot.
           sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
         ),
-        store ?? MemoryLocalStore(), // null → default in-memory store (offline is always on)
+        store ??
+            MemoryLocalStore(), // null → default in-memory store (offline is always on)
         maxCachedDocuments: maxCachedDocuments,
         cacheSizeBytes: cacheSizeBytes,
       );
@@ -101,8 +111,11 @@ class FacadeHarness {
 
   /// Sends a `response` frame correlated to [frame]'s id.
   void respond(Map<String, Object?> frame, Map<String, Object?> result) {
-    channel
-        .serverSend({'type': 'response', 'id': frame['id'], 'result': result});
+    channel.serverSend({
+      'type': 'response',
+      'id': frame['id'],
+      'result': result,
+    });
   }
 
   /// Sends an `error` frame correlated to [frame]'s id.
@@ -151,8 +164,8 @@ class FacadeHarness {
 
 /// Encodes a native field map into wire (tagged-value) form.
 Map<String, Object?> wireFields(Map<String, Object?> native) => {
-      for (final e in native.entries) e.key: toValue(e.value).toJson(),
-    };
+  for (final e in native.entries) e.key: toValue(e.value).toJson(),
+};
 
 /// Builds a wire `document` map (the shape inside a `doc.get`/query response).
 Map<String, Object?> wireDoc(
@@ -181,9 +194,8 @@ Map<String, Object?> wireDoc(
 Map<String, Object?> writeResultsPayload({
   String updateTime = '2026-06-08T10:00:00+00:00',
   int count = 1,
-}) =>
-    {
-      'writeResults': [
-        for (var i = 0; i < count; i++) {'updateTime': updateTime},
-      ],
-    };
+}) => {
+  'writeResults': [
+    for (var i = 0; i < count; i++) {'updateTime': updateTime},
+  ],
+};

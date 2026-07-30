@@ -111,8 +111,9 @@ final class WincheDatabase extends WincheDatabaseService {
     _config = value;
   }
 
-  final _connectionRelay =
-      StatusRelay<ConnectionState>(ConnectionState.disconnected);
+  final _connectionRelay = StatusRelay<ConnectionState>(
+    ConnectionState.disconnected,
+  );
   final _syncRelay = EventRelay<SyncEvent>();
 
   @override
@@ -210,13 +211,15 @@ final class WincheDatabase extends WincheDatabaseService {
     // Only ever called on a freshly-constructed facade (no prior session), so
     // `_bind`'s `await previous.dispose()` branch never runs and this
     // completes synchronously despite `_bind`'s `Future`-returning signature.
-    unawaited(_bind(
-      config,
-      store,
-      conflictPolicy,
-      maxCachedDocuments: maxCachedDocuments,
-      cacheSizeBytes: cacheSizeBytes,
-    ));
+    unawaited(
+      _bind(
+        config,
+        store,
+        conflictPolicy,
+        maxCachedDocuments: maxCachedDocuments,
+        cacheSizeBytes: cacheSizeBytes,
+      ),
+    );
   }
 
   @override
@@ -303,8 +306,14 @@ final class WincheDatabase extends WincheDatabaseService {
   /// Survives session swaps.
   Stream<SyncEvent> get syncEvents => _syncRelay.stream;
 
-  /// The current connection state.
-  ConnectionState get connectionState => _require().transport.connectionState;
+  /// The current connection state, or [ConnectionState.disconnected] when no
+  /// identity is bound.
+  ///
+  /// Deliberately does not throw [WincheUnboundException] like the data
+  /// operations do: observing status is not an operation, and a widget that
+  /// renders a connection chip must be able to build before anyone signs in.
+  ConnectionState get connectionState =>
+      _session?.transport.connectionState ?? ConnectionState.disconnected;
 
   /// Whether there are un-synced local writes.
   Future<bool> get hasPendingWrites => _require().queue.hasPending();
@@ -320,14 +329,6 @@ final class WincheDatabase extends WincheDatabaseService {
 
   /// Wipes the local cache and pending-write queue.
   Future<void> clearPersistence() => _require().store.clear();
-
-  Stream<ServerFrame> listenEvents(String subscriptionId) {
-    return _require().transport.listenEvents(subscriptionId);
-  }
-
-  void releaseSubscription(String subscriptionId) {
-    _require().transport.releaseSubscription(subscriptionId);
-  }
 
   /// Returns a [CollectionReference] for [path].
   CollectionReference<Map<String, Object?>> collection(String path) {

@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:test/test.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
+import 'package:winche_database/src/protocol/connection.dart'
+    show ConnectionConfig;
 
 import '../protocol/fake_channel.dart';
 import 'facade_harness.dart' show pump, wireDoc, wireFields;
@@ -48,7 +50,8 @@ class ReconnectHarness {
     // The backend sends `welcome` immediately on upgrade — there is no `hello`.
     // Fire it once per dialed channel.
     scheduleMicrotask(
-        () => channel.serverSend({'type': 'welcome', 'connectionId': 'test'}));
+      () => channel.serverSend({'type': 'welcome', 'connectionId': 'test'}),
+    );
     channel.onClientFrame = (frame) {
       scheduleMicrotask(() => handler?.call(channel, frame));
     };
@@ -56,8 +59,10 @@ class ReconnectHarness {
   }
 
   void respond(
-          FakeChannel c, Map<String, Object?> frame, Map<String, Object?> r) =>
-      c.serverSend({'type': 'response', 'id': frame['id'], 'result': r});
+    FakeChannel c,
+    Map<String, Object?> frame,
+    Map<String, Object?> r,
+  ) => c.serverSend({'type': 'response', 'id': frame['id'], 'result': r});
 
   /// Client request frames captured on [channel], excluding `hello`.
   List<Map<String, Object?>> requestsOn(FakeChannel channel) =>
@@ -74,90 +79,93 @@ Map<String, Object?> snapshotFrame(
   List<Map<String, Object?>> documents, {
   required int resumeToken,
   String readTime = '2026-06-08T12:00:00+00:00',
-}) =>
-    {
-      'type': 'listen.snapshot',
-      'subscriptionId': subId,
-      'documents': documents,
-      'readTime': readTime,
-      'resumeToken': resumeToken,
-    };
+}) => {
+  'type': 'listen.snapshot',
+  'subscriptionId': subId,
+  'documents': documents,
+  'readTime': readTime,
+  'resumeToken': resumeToken,
+};
 
 void main() {
-  test('listener re-subscribes with the last resume token after reconnect',
-      () async {
-    final h = ReconnectHarness();
-
-    // Each channel's listen frame gets its own subscription id, derived from the
-    // channel index so we can route pushed frames to the right subscription.
-    String subIdFor(FakeChannel c) => 'sub-${h.channels.indexOf(c)}';
-    final listenFrames = <FakeChannel, Map<String, Object?>>{};
-
-    h.handler = (c, f) {
-      switch (f['type']) {
-        case 'listen':
-          listenFrames[c] = f;
-          h.respond(c, f, {'subscriptionId': subIdFor(c)});
-        case 'unlisten':
-          h.respond(c, f, const {});
-        default:
-          h.respond(c, f, const {});
-      }
-    };
-
-    final events = <QuerySnapshot<Map<String, Object?>>>[];
-    final sub = h.db.collection('users').snapshots().listen(events.add);
-    await pump();
-
-    // Initial subscription on channel 0, no resume token.
-    expect(h.channels, hasLength(1));
-    expect(listenFrames[h.channels[0]]!.containsKey('resumeToken'), isFalse);
-
-    // First snapshot establishes resume token 42.
-    h.channels[0].serverSend(snapshotFrame(
-      'sub-0',
-      [
-        wireDoc('users/u1', wireFields({'n': 1}))
-      ],
-      resumeToken: 42,
-    ));
-    await pump();
-    // Cache-first (empty) emit + the server snapshot.
-    expect(events.last.docs.map((d) => d.id), ['u1']);
-
-    // The socket drops → the connection auto-reconnect re-dials a fresh channel.
-    await h.channels[0].serverClose();
-    await pump(12);
-
-    // A new channel was dialed and the listener re-subscribed on it, carrying
-    // the last resume token.
-    expect(h.channels.length, greaterThanOrEqualTo(2));
-    final ch1 = h.channels[1];
-    expect(listenFrames[ch1], isNotNull,
-        reason: 'listener should re-subscribe on the new channel');
-    expect(listenFrames[ch1]!['resumeToken'], 42);
-
-    // Resumed stream keeps delivering on the new subscription.
-    ch1.serverSend(snapshotFrame(
-      'sub-1',
-      [
-        wireDoc('users/u1', wireFields({'n': 1})),
-        wireDoc('users/u2', wireFields({'n': 2})),
-      ],
-      resumeToken: 43,
-      readTime: '2026-06-08T12:05:00+00:00',
-    ));
-    await pump();
-
-    expect(events.length, greaterThanOrEqualTo(2));
-    expect(events.last.docs.map((d) => d.id), ['u1', 'u2']);
-
-    await sub.cancel();
-    await h.close();
-  });
-
   test(
-      'reconnect resubscribe is local '
+    'listener re-subscribes with the last resume token after reconnect',
+    () async {
+      final h = ReconnectHarness();
+
+      // Each channel's listen frame gets its own subscription id, derived from the
+      // channel index so we can route pushed frames to the right subscription.
+      String subIdFor(FakeChannel c) => 'sub-${h.channels.indexOf(c)}';
+      final listenFrames = <FakeChannel, Map<String, Object?>>{};
+
+      h.handler = (c, f) {
+        switch (f['type']) {
+          case 'listen':
+            listenFrames[c] = f;
+            h.respond(c, f, {'subscriptionId': subIdFor(c)});
+          case 'unlisten':
+            h.respond(c, f, const {});
+          default:
+            h.respond(c, f, const {});
+        }
+      };
+
+      final events = <QuerySnapshot<Map<String, Object?>>>[];
+      final sub = h.db.collection('users').snapshots().listen(events.add);
+      await pump();
+
+      // Initial subscription on channel 0, no resume token.
+      expect(h.channels, hasLength(1));
+      expect(listenFrames[h.channels[0]]!.containsKey('resumeToken'), isFalse);
+
+      // First snapshot establishes resume token 42.
+      h.channels[0].serverSend(
+        snapshotFrame('sub-0', [
+          wireDoc('users/u1', wireFields({'n': 1})),
+        ], resumeToken: 42),
+      );
+      await pump();
+      // Cache-first (empty) emit + the server snapshot.
+      expect(events.last.docs.map((d) => d.id), ['u1']);
+
+      // The socket drops → the connection auto-reconnect re-dials a fresh channel.
+      await h.channels[0].serverClose();
+      await pump(12);
+
+      // A new channel was dialed and the listener re-subscribed on it, carrying
+      // the last resume token.
+      expect(h.channels.length, greaterThanOrEqualTo(2));
+      final ch1 = h.channels[1];
+      expect(
+        listenFrames[ch1],
+        isNotNull,
+        reason: 'listener should re-subscribe on the new channel',
+      );
+      expect(listenFrames[ch1]!['resumeToken'], 42);
+
+      // Resumed stream keeps delivering on the new subscription.
+      ch1.serverSend(
+        snapshotFrame(
+          'sub-1',
+          [
+            wireDoc('users/u1', wireFields({'n': 1})),
+            wireDoc('users/u2', wireFields({'n': 2})),
+          ],
+          resumeToken: 43,
+          readTime: '2026-06-08T12:05:00+00:00',
+        ),
+      );
+      await pump();
+
+      expect(events.length, greaterThanOrEqualTo(2));
+      expect(events.last.docs.map((d) => d.id), ['u1', 'u2']);
+
+      await sub.cancel();
+      await h.close();
+    },
+  );
+
+  test('reconnect resubscribe is local '
       '(no unlisten to the dead socket)', () async {
     final h = ReconnectHarness();
     String subIdFor(FakeChannel c) => 'sub-${h.channels.indexOf(c)}';
@@ -183,13 +191,16 @@ void main() {
 
     // The dead channel 0 must NOT have received an unlisten (the subscription is
     // released locally because the connection is gone).
-    final unlistensOnCh0 =
-        h.requestsOn(h.channels[0]).where((f) => f['type'] == 'unlisten');
+    final unlistensOnCh0 = h
+        .requestsOn(h.channels[0])
+        .where((f) => f['type'] == 'unlisten');
     expect(unlistensOnCh0, isEmpty);
 
     // The new channel carries the re-subscribe.
     expect(
-        h.requestsOn(h.channels[1]).any((f) => f['type'] == 'listen'), isTrue);
+      h.requestsOn(h.channels[1]).any((f) => f['type'] == 'listen'),
+      isTrue,
+    );
 
     await sub.cancel();
     await h.close();

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:test/test.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
+import 'package:winche_database/src/protocol/connection.dart'
+    show ConnectionConfig;
 import '../offline/fake_local_store.dart';
 
 void main() {
@@ -20,34 +22,39 @@ void main() {
   });
   tearDown(() => db.dispose());
 
-  test('query.snapshots emits cache-first and reacts to local writes',
-      () async {
-    final snaps = <QuerySnapshot<Map<String, Object?>>>[];
-    final sub = db.collection('users').snapshots().listen(snaps.add);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(snaps, isNotEmpty);
-    expect(snaps.first.docs, isEmpty);
-    expect(snaps.first.metadata.fromCache, isTrue);
+  test(
+    'query.snapshots emits cache-first and reacts to local writes',
+    () async {
+      final snaps = <QuerySnapshot<Map<String, Object?>>>[];
+      final sub = db.collection('users').snapshots().listen(snaps.add);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(snaps, isNotEmpty);
+      expect(snaps.first.docs, isEmpty);
+      expect(snaps.first.metadata.fromCache, isTrue);
 
-    await db.doc('users/u1').set({'name': 'Alice'});
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(snaps.last.docs.map((d) => d.id), ['u1']);
-    expect(snaps.last.docs.single.data(), {'name': 'Alice'});
-    expect(snaps.last.metadata.hasPendingWrites, isTrue);
+      await db.doc('users/u1').set({'name': 'Alice'});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(snaps.last.docs.map((d) => d.id), ['u1']);
+      expect(snaps.last.docs.single.data(), {'name': 'Alice'});
+      expect(snaps.last.metadata.hasPendingWrites, isTrue);
 
-    await db.doc('users/u1').delete();
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(snaps.last.docs, isEmpty);
+      await db.doc('users/u1').delete();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(snaps.last.docs, isEmpty);
 
-    await sub.cancel();
-  });
+      await sub.cancel();
+    },
+  );
 
   test('query.snapshots reflects a local update with ordering', () async {
     await db.doc('users/a').set({'age': 30});
     await db.doc('users/b').set({'age': 20});
     final snaps = <QuerySnapshot<Map<String, Object?>>>[];
-    final sub =
-        db.collection('users').orderBy('age').snapshots().listen(snaps.add);
+    final sub = db
+        .collection('users')
+        .orderBy('age')
+        .snapshots()
+        .listen(snaps.add);
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(snaps.last.docs.map((d) => d.id), ['b', 'a']);
     await sub.cancel();
