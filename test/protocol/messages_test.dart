@@ -403,32 +403,32 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // WincheException factory — PROTOCOL §6.1 status mapping
+  // WincheProtocolException factory — PROTOCOL §6.1 status mapping
   // ---------------------------------------------------------------------------
-  group('WincheException.fromError', () {
+  group('WincheProtocolException.fromError', () {
     test('ABORTED → AbortedException', () {
       expect(
-        WincheException.fromError('ABORTED', 'conflict'),
+        WincheProtocolException.fromError('ABORTED', 'conflict'),
         isA<AbortedException>(),
       );
     });
 
     test('PERMISSION_DENIED → PermissionDeniedException', () {
       expect(
-        WincheException.fromError('PERMISSION_DENIED', 'denied'),
+        WincheProtocolException.fromError('PERMISSION_DENIED', 'denied'),
         isA<PermissionDeniedException>(),
       );
     });
 
     test('UNAUTHENTICATED → UnauthenticatedException', () {
       expect(
-        WincheException.fromError('UNAUTHENTICATED', 'bad token'),
+        WincheProtocolException.fromError('UNAUTHENTICATED', 'bad token'),
         isA<UnauthenticatedException>(),
       );
     });
 
     test('INVALID_QUERY → InvalidQueryException', () {
-      final ex = WincheException.fromError(
+      final ex = WincheProtocolException.fromError(
         'INVALID_QUERY',
         'Unknown operator',
         {'jsonPath': r'$.where.op'},
@@ -438,7 +438,7 @@ void main() {
     });
 
     test('INVALID_QUERY with code → InvalidQueryException.code', () {
-      final ex = WincheException.fromError(
+      final ex = WincheProtocolException.fromError(
         'INVALID_QUERY',
         'orderBy field missing',
         {'code': 'ORDERBY_FIELD_NOT_FILTERED'},
@@ -449,7 +449,7 @@ void main() {
 
     test('UNAVAILABLE → UnavailableException', () {
       expect(
-        WincheException.fromError('UNAVAILABLE', 'down'),
+        WincheProtocolException.fromError('UNAVAILABLE', 'down'),
         isA<UnavailableException>(),
       );
     });
@@ -457,33 +457,33 @@ void main() {
     // Remaining protocol statuses map to their typed subclasses
     // (see exceptions_test.dart for the full matrix).
     test('NOT_FOUND → NotFoundException', () {
-      final ex = WincheException.fromError('NOT_FOUND', 'missing');
+      final ex = WincheProtocolException.fromError('NOT_FOUND', 'missing');
       expect(ex, isA<NotFoundException>());
       expect(ex.status, equals('NOT_FOUND'));
     });
 
     test('ALREADY_EXISTS → AlreadyExistsException', () {
-      expect(WincheException.fromError('ALREADY_EXISTS', 'exists'),
+      expect(WincheProtocolException.fromError('ALREADY_EXISTS', 'exists'),
           isA<AlreadyExistsException>());
     });
 
     test('FAILED_PRECONDITION → FailedPreconditionException', () {
-      expect(WincheException.fromError('FAILED_PRECONDITION', 'mismatch'),
+      expect(WincheProtocolException.fromError('FAILED_PRECONDITION', 'mismatch'),
           isA<FailedPreconditionException>());
     });
 
     test('DEADLINE_EXCEEDED → DeadlineExceededException', () {
-      expect(WincheException.fromError('DEADLINE_EXCEEDED', 'timeout'),
+      expect(WincheProtocolException.fromError('DEADLINE_EXCEEDED', 'timeout'),
           isA<DeadlineExceededException>());
     });
 
     test('INTERNAL → InternalException', () {
-      expect(WincheException.fromError('INTERNAL', 'bug'),
+      expect(WincheProtocolException.fromError('INTERNAL', 'bug'),
           isA<InternalException>());
     });
 
     test('INVALID_ARGUMENT → InvalidArgumentException', () {
-      expect(WincheException.fromError('INVALID_ARGUMENT', 'bad'),
+      expect(WincheProtocolException.fromError('INVALID_ARGUMENT', 'bad'),
           isA<InvalidArgumentException>());
     });
   });

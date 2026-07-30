@@ -235,9 +235,9 @@ final class ErrorFrame extends ServerFrame {
   final String message;
   final Map<String, Object?>? details;
 
-  /// Creates a [WincheException] from this frame.
-  WincheException toException() =>
-      WincheException.fromError(status, message, details);
+  /// Creates a [WincheProtocolException] from this frame.
+  WincheProtocolException toException() =>
+      WincheProtocolException.fromError(status, message, details);
 }
 
 /// `{"type": "listen.snapshot", ...}` — full state snapshot (PROTOCOL §7.6).

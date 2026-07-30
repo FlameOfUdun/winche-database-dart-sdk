@@ -45,7 +45,7 @@ final class WriteConflict extends SyncEvent {
         _overwrite = onOverwrite;
 
   final List<String> paths;
-  final WincheException error;
+  final WincheProtocolException error;
 
   /// The server's current document per path (null = absent), for the app to
   /// inspect while resolving.
@@ -90,7 +90,7 @@ final class WriteFailed extends SyncEvent {
   });
 
   final List<String> paths;
-  final WincheException error;
+  final WincheProtocolException error;
 
   /// The dropped pending writes, in queue order.
   final List<PendingWrite> writes;

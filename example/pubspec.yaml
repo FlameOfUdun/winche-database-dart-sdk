@@ -38,7 +38,7 @@ dependencies:
   # Needed directly here for Winche.initializeApp / WincheOptions. Must resolve
   # to the same source as winche_database's own dependency — a path dep here
   # against a hosted one there is a version-solving conflict, not two copies.
-  winche_core: ^0.1.0
+  winche_core: ^0.2.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

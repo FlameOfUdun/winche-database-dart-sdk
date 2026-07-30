@@ -368,7 +368,7 @@ class ProtocolConnection {
   }) async {
     try {
       _channel = await _channelFactory(await _dialUri());
-    } on WincheException {
+    } on WincheProtocolException {
       rethrow; // a tokenProvider that itself reports an auth failure
     } catch (e) {
       throw UnavailableException('Failed to open WebSocket channel: $e');
@@ -468,7 +468,7 @@ class ProtocolConnection {
         final completer = _pending.remove(rawId);
         if (completer != null && !completer.isCompleted) {
           completer.completeError(
-            WincheException('INTERNAL', 'Malformed server frame for id $rawId'),
+            WincheProtocolException('INTERNAL', 'Malformed server frame for id $rawId'),
           );
         }
       }
@@ -488,11 +488,11 @@ class ProtocolConnection {
         if (id != null) {
           final completer = _pending.remove(id);
           completer?.completeError(
-              WincheException.fromError(status, message, details));
+              WincheProtocolException.fromError(status, message, details));
         } else {
           // Pre-welcome error (e.g. 4401 authentication failure).
           _welcomeCompleter?.completeError(
-            WincheException.fromError(status, message, details),
+            WincheProtocolException.fromError(status, message, details),
           );
           _welcomeCompleter = null;
         }

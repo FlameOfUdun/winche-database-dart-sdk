@@ -179,7 +179,7 @@ class SyncController {
       // the drain from here.
       _emitAuthStall(unit, e);
       return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
-    } on WincheException catch (e) {
+    } on WincheProtocolException catch (e) {
       await _handleError(unit, key, e);
       return (outcome: _DrainOutcome.mutated, rebases: const <String, String>{});
     }
@@ -299,7 +299,7 @@ class SyncController {
   }
 
   Future<void> _handleError(
-      List<PendingWrite> unit, String key, WincheException e) async {
+      List<PendingWrite> unit, String key, WincheProtocolException e) async {
     if (_conflictStatuses.contains(e.status)) {
       await _onConflict(unit, key, e);
     } else {
@@ -313,7 +313,7 @@ class SyncController {
 
   /// Drops [unit] from the caller's bookkeeping and reports it, carrying the
   /// entries themselves so the app can recover work the queue no longer holds.
-  void _emitFailed(List<PendingWrite> unit, WincheException e) {
+  void _emitFailed(List<PendingWrite> unit, WincheProtocolException e) {
     _emit(WriteFailed(
       paths: [for (final p in unit) p.path],
       error: e,
@@ -323,7 +323,7 @@ class SyncController {
   }
 
   Future<void> _onConflict(
-      List<PendingWrite> unit, String key, WincheException e) async {
+      List<PendingWrite> unit, String key, WincheProtocolException e) async {
     if (_policy != ConflictPolicy.manual) {
       final seq = unit.first.seq;
       final attempts = (_autoResolveAttempts[seq] ?? 0) + 1;
@@ -376,7 +376,7 @@ class SyncController {
     try {
       final r = await _transport.request(docGetFrame('', path));
       return WireDocument.fromAny(r['document']);
-    } on WincheException {
+    } on WincheProtocolException {
       return null;
     }
   }

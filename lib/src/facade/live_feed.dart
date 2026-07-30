@@ -168,7 +168,7 @@ abstract class _LiveFeed {
       _frames = _session.transport
           .listenEvents(subId)
           .listen(_onFrame, onError: (_) => _goDown(), onDone: _goDown);
-    } on WincheException catch (e) {
+    } on WincheProtocolException catch (e) {
       if (_permanentStatuses.contains(e.status)) {
         _permanent = true;
         if (!_out.isClosed) _out.addError(e);

@@ -308,7 +308,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _runOp(String label, Future<void> Function() fn) async {
     try {
       await fn();
-    } on WincheException catch (e) {
+    } on WincheProtocolException catch (e) {
       _snack('$label failed: ${e.status}');
     } catch (e) {
       _snack('$label failed: $e');
@@ -357,7 +357,7 @@ class _HomePageState extends State<HomePage> {
         RecordFilter.done => 'done',
       };
       _snack('Server count ($filterLabel): $n');
-    } on WincheException catch (e) {
+    } on WincheProtocolException catch (e) {
       _snack('Count failed: ${e.status} — ${e.message}');
     } catch (e) {
       _snack('Count failed: $e');

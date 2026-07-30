@@ -135,7 +135,7 @@ void main() {
   // ---------------------------------------------------------------------------
   // Error frame → typed exception
   // ---------------------------------------------------------------------------
-  test('error frame → typed WincheException', () async {
+  test('error frame → typed WincheProtocolException', () async {
     final (conn, fake) = await _makeConnected();
 
     final result = conn.request({'type': 'doc.get', 'path': 'users/missing'});
@@ -152,7 +152,7 @@ void main() {
 
     await expectLater(
       result,
-      throwsA(isA<WincheException>()
+      throwsA(isA<WincheProtocolException>()
           .having((e) => e.status, 'status', 'NOT_FOUND')),
     );
     await conn.close();
@@ -314,7 +314,7 @@ void main() {
 
     final result = conn.request({'type': 'doc.get', 'path': 'users/u1'});
     // Register expectLater BEFORE the malformed frame is sent so the error is captured.
-    final resultExpect = expectLater(result, throwsA(isA<WincheException>()));
+    final resultExpect = expectLater(result, throwsA(isA<WincheProtocolException>()));
     await Future<void>.delayed(Duration.zero);
 
     runZonedGuarded(
@@ -330,7 +330,7 @@ void main() {
     );
 
     await Future<void>.delayed(Duration.zero);
-    // Parse threw FormatException; frame has string id '0' → request fails with WincheException.
+    // Parse threw FormatException; frame has string id '0' → request fails with WincheProtocolException.
     await resultExpect;
     await conn.close();
   });

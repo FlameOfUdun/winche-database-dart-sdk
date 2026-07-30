@@ -98,7 +98,7 @@ class CachingReadCoordinator implements ReadCoordinator {
     try {
       await serverFetch();
       return false;
-    } on WincheException catch (e) {
+    } on WincheProtocolException catch (e) {
       if (_transientStatuses.contains(e.status)) return true;
       rethrow;
     }

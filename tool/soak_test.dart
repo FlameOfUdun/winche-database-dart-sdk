@@ -125,7 +125,7 @@ Future<void> main(List<String> args) async {
           capture('TIMEOUT', label);
         } on NotFoundException {
           // update on a missing doc — expected under random churn
-        } on WincheException catch (e) {
+        } on WincheProtocolException catch (e) {
           capture('op($label)', e);
         }
       }());
@@ -158,7 +158,7 @@ Future<void> main(List<String> args) async {
     } else {
       try {
         await docRef(i).delete();
-      } on WincheException catch (e) {
+      } on WincheProtocolException catch (e) {
         capture('terminal-delete(d$i)', e);
       }
       deleted.add(i);

@@ -1,20 +1,29 @@
 /// Winche Database exceptions for all error status codes (PROTOCOL §5.1).
 library;
 
-/// Base exception for all Winche Database errors.
+import 'package:winche_core/winche_core.dart';
+
+/// Base exception for every failure this package's backend reports.
+///
+/// Sits one level under core's [WincheException], the root for the whole
+/// Winche stack. That is the intended shape: `on WincheException` asks "did
+/// any Winche SDK fail?", while `on WincheProtocolException` asks the
+/// narrower and usually more useful "did the *database backend* reject
+/// this?" — a question a client-side lifecycle failure like
+/// [WincheUnboundException] should not answer yes to.
 ///
 /// [status] is one of the PROTOCOL §5.1 status strings.
-/// [message] is the human-readable description.
+/// [message], inherited from [WincheException], is the human-readable
+/// description.
 /// [details] is an optional map with additional context (e.g. jsonPath, code).
-class WincheException implements Exception {
-  const WincheException(this.status, this.message, [this.details]);
+class WincheProtocolException extends WincheException {
+  const WincheProtocolException(this.status, super.message, [this.details]);
 
   final String status;
-  final String message;
   final Map<String, Object?>? details;
 
   /// Factory that returns the most specific subclass for the given [status].
-  factory WincheException.fromError(
+  factory WincheProtocolException.fromError(
     String status,
     String message, [
     Map<String, Object?>? details,
@@ -31,16 +40,16 @@ class WincheException implements Exception {
       'DEADLINE_EXCEEDED' => DeadlineExceededException(message, details),
       'INTERNAL' => InternalException(message, details),
       'UNAVAILABLE' => UnavailableException(message, details),
-      _ => WincheException(status, message, details),
+      _ => WincheProtocolException(status, message, details),
     };
   }
 
   @override
-  String toString() => 'WincheException($status): $message';
+  String toString() => 'WincheProtocolException($status): $message';
 }
 
 /// `ABORTED` — transaction conflict, expired, or unknown transaction id.
-class AbortedException extends WincheException {
+class AbortedException extends WincheProtocolException {
   const AbortedException(String message, [Map<String, Object?>? details])
       : super('ABORTED', message, details);
 
@@ -49,7 +58,7 @@ class AbortedException extends WincheException {
 }
 
 /// `PERMISSION_DENIED` — access rule denied the operation.
-class PermissionDeniedException extends WincheException {
+class PermissionDeniedException extends WincheProtocolException {
   const PermissionDeniedException(String message,
       [Map<String, Object?>? details])
       : super('PERMISSION_DENIED', message, details);
@@ -59,7 +68,7 @@ class PermissionDeniedException extends WincheException {
 }
 
 /// `UNAUTHENTICATED` — authentication token invalid or missing.
-class UnauthenticatedException extends WincheException {
+class UnauthenticatedException extends WincheProtocolException {
   const UnauthenticatedException(String message,
       [Map<String, Object?>? details])
       : super('UNAUTHENTICATED', message, details);
@@ -73,7 +82,7 @@ class UnauthenticatedException extends WincheException {
 /// For JSON parse errors, [jsonPath] contains the path (from `details.jsonPath`).
 /// For plan-validation failures, [code] contains the validation code
 /// (from `details.code`).
-class InvalidQueryException extends WincheException {
+class InvalidQueryException extends WincheProtocolException {
   const InvalidQueryException(String message, [Map<String, Object?>? details])
       : super('INVALID_QUERY', message, details);
 
@@ -90,7 +99,7 @@ class InvalidQueryException extends WincheException {
 
 /// `INVALID_ARGUMENT` — malformed request, bad field types, batch size
 /// exceeded, or an invalid write shape.
-class InvalidArgumentException extends WincheException {
+class InvalidArgumentException extends WincheProtocolException {
   const InvalidArgumentException(String message,
       [Map<String, Object?>? details])
       : super('INVALID_ARGUMENT', message, details);
@@ -101,7 +110,7 @@ class InvalidArgumentException extends WincheException {
 
 /// `NOT_FOUND` — an `UpdateWrite` or `exists: true` precondition targeted a
 /// document that does not exist.
-class NotFoundException extends WincheException {
+class NotFoundException extends WincheProtocolException {
   const NotFoundException(String message, [Map<String, Object?>? details])
       : super('NOT_FOUND', message, details);
 
@@ -111,7 +120,7 @@ class NotFoundException extends WincheException {
 
 /// `ALREADY_EXISTS` — an `exists: false` precondition targeted an existing
 /// document.
-class AlreadyExistsException extends WincheException {
+class AlreadyExistsException extends WincheProtocolException {
   const AlreadyExistsException(String message, [Map<String, Object?>? details])
       : super('ALREADY_EXISTS', message, details);
 
@@ -120,7 +129,7 @@ class AlreadyExistsException extends WincheException {
 }
 
 /// `FAILED_PRECONDITION` — an `updateTime` precondition did not match.
-class FailedPreconditionException extends WincheException {
+class FailedPreconditionException extends WincheProtocolException {
   const FailedPreconditionException(String message,
       [Map<String, Object?>? details])
       : super('FAILED_PRECONDITION', message, details);
@@ -130,7 +139,7 @@ class FailedPreconditionException extends WincheException {
 }
 
 /// `DEADLINE_EXCEEDED` — the operation timed out on the server.
-class DeadlineExceededException extends WincheException {
+class DeadlineExceededException extends WincheProtocolException {
   const DeadlineExceededException(String message,
       [Map<String, Object?>? details])
       : super('DEADLINE_EXCEEDED', message, details);
@@ -140,7 +149,7 @@ class DeadlineExceededException extends WincheException {
 }
 
 /// `INTERNAL` — an unexpected server error (always a bug; report it).
-class InternalException extends WincheException {
+class InternalException extends WincheProtocolException {
   const InternalException(String message, [Map<String, Object?>? details])
       : super('INTERNAL', message, details);
 
@@ -154,7 +163,7 @@ class InternalException extends WincheException {
 /// This status is **client-generated** and does not appear in the PROTOCOL
 /// status vocabulary; it is used by [ProtocolConnection]
 /// to signal transport-level failures.
-class UnavailableException extends WincheException {
+class UnavailableException extends WincheProtocolException {
   const UnavailableException(String message, [Map<String, Object?>? details])
       : super('UNAVAILABLE', message, details);
 
@@ -162,33 +171,3 @@ class UnavailableException extends WincheException {
   String toString() => 'UnavailableException: $message';
 }
 
-/// Thrown when the database is used while no identity is bound — before the
-/// first sign-in, or after a sign-out.
-///
-/// Distinct from a [StateError] on purpose. This state is **recoverable**: the
-/// same facade starts working again as soon as an identity arrives. A
-/// [StateError] from this package means the facade itself has been disposed,
-/// which is terminal.
-///
-/// There is no local store to serve or queue into while unbound — the store is
-/// per-identity — so reads and writes both throw rather than buffering. A write
-/// buffered while signed out would replay under whoever signs in next.
-///
-/// **This is deliberately not a [WincheException].** Every member of that
-/// hierarchy carries a PROTOCOL §5.1 status string that the server sent; this
-/// state never crosses the wire, and inventing a status for it would put a
-/// client-side lifecycle concern into a wire vocabulary.
-///
-/// The practical consequence: `on WincheException` does **not** catch this.
-/// That is intended. A `PERMISSION_DENIED` is worth retrying or surfacing;
-/// being signed out is not — it is fixed by signing in, not by handling it
-/// where you handle server errors. Gate on sign-in state instead of catching.
-final class WincheUnboundException implements Exception {
-  /// Creates the exception.
-  WincheUnboundException();
-
-  @override
-  String toString() =>
-      'WincheUnboundException: no identity is bound to this app. '
-      'Wait for sign in before using the database.';
-}
