@@ -6,6 +6,59 @@ import 'package:winche_database/src/protocol/connection.dart';
 import 'fake_channel.dart';
 
 void main() {
+  // Closing while a retry's dial is IN FLIGHT AND ABOUT TO SUCCEED.
+  //
+  // This is the discriminating case for "closed is terminal", and it is worth
+  // spelling out why the obvious version of this test is not. With a dial that
+  // always fails, `_reconnectLoop` re-checks the state after its backoff and
+  // returns cleanly, so nothing is exercised. The crash needs a dial that
+  // *succeeds* after close(): the loop then reaches `_setState(ready)` in its
+  // success branch, which has no state check of its own.
+  //
+  // Unguarded, that revives a closed connection — it keeps a socket nobody owns
+  // and pings on it — and adds to a closed controller, throwing StateError from
+  // inside a callback where nothing catches it.
+  //
+  // The gate Completer is what makes the race deterministic instead of hoped-for.
+  test('closing during an in-flight successful dial does not revive it',
+      () async {
+    final gate = Completer<FakeChannel>();
+    var dials = 0;
+
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('ws://fake/documents/ws'),
+      pingInterval: const Duration(hours: 1),
+      sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+      channelFactory: (_) {
+        dials++;
+        if (dials == 1) throw Exception('refused'); // initial dial → loop starts
+        return gate.future; // the retry's dial: the test decides when it lands
+      },
+    ));
+
+    await expectLater(conn.connect(), throwsA(isA<Object>()));
+
+    // Let the loop get as far as awaiting our gated dial.
+    while (dials < 2) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    // Close with that dial still outstanding.
+    await conn.close();
+    expect(conn.currentState, equals(ConnectionState.closed));
+
+    // Now let it succeed. A connection that respects `closed` ignores this.
+    final channel = FakeChannel()..startCapture();
+    scheduleMicrotask(() =>
+        channel.serverSend({'type': 'welcome', 'connectionId': 'late'}));
+    gate.complete(channel);
+
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(conn.currentState, equals(ConnectionState.closed),
+        reason: 'a late successful dial must not resurrect a closed connection');
+  });
+
   // The app started offline. Today connect() throws once and gives up, so the
   // connection never recovers even after the network returns.
   test('a failed initial dial retries and reaches ready', () async {
