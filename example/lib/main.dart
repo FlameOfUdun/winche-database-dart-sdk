@@ -282,13 +282,22 @@ class _HomePageState extends State<HomePage> {
   /// connection chip goes to `disconnected` rather than freezing on its last
   /// value, because [StatusRelay] emits a final value on detach.
   Future<void> _signOut() async {
-    _auth.signOut();
-    await Winche.app.settled;
-    if (!mounted) return;
+    // Clear `_uid` BEFORE announcing, mirroring how `_signIn` raises
+    // `_connecting` before it announces.
+    //
+    // Core unbinds the session synchronously inside `signOut()`, and the
+    // `connectionStates` listener fires in that same turn with `disconnected`.
+    // Announcing first would leave a window where the session is already gone
+    // but `_uid` is still set — and that rebuild takes the records branch,
+    // calling `snapshots()` on an unbound database and throwing
+    // `WincheUnboundException` into the widget tree. Signing out would show a
+    // red error screen instead of the signed-out view.
     setState(() {
       _uid = null;
       _pending = [];
     });
+    _auth.signOut();
+    await Winche.app.settled;
   }
 
   Future<void> _refreshPending() async {
