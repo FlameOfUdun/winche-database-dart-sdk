@@ -2,24 +2,80 @@ import 'dart:async';
 
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter/material.dart' as material show ConnectionState;
-import 'package:winche_core/testing.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
-// Hardcoded connection / identity — the sample server hard-codes uid = "user-123"
-// and grants that uid full access to userData/user-123/{document=**}.
 const kUri = 'ws://localhost:5183/documents/ws';
-const kUid = 'user-123';
-const kCollection = 'userData/$kUid/records';
+
+/// The two identities this demo can sign in as.
+///
+/// The sample server treats the access token as the uid and its rules grant
+/// `userData/{userId}/**` only to a matching `auth.uid`, so these two really do
+/// see different data — which is what makes the user-switch button worth
+/// pressing.
+const kUsers = ['alice', 'bob'];
+
+/// Each identity owns its own records collection.
+String collectionFor(String uid) => 'userData/$uid/records';
+
+/// A stand-in for a real auth package.
+///
+/// `winche_database` has no sign-in surface of its own — core defines none,
+/// deliberately, because how a backend authenticates is that backend's
+/// business. Some [WincheAuthService] must be registered with the app and
+/// announce an identity before the database is usable.
+///
+/// This one has no backend to authenticate against: the token it hands out is
+/// simply the uid, which the sample server accepts at face value. A real
+/// implementation would exchange credentials for a signed token and announce
+/// the result the same way.
+final class DemoAuthService extends WincheAuthService {
+  DemoAuthService(super.app);
+
+  WincheIdentity? _identity;
+
+  @override
+  WincheIdentity? get activeIdentity => _identity;
+
+  @override
+  Future<String?> getAuthToken({bool forceRefresh = false}) async =>
+      _identity?.id;
+
+  /// Signs in as [uid]. Core tears down whatever session was running and
+  /// builds a fresh one — new store, new socket, new token.
+  void signIn(String uid) {
+    _identity = WincheIdentity(uid);
+    notifyIdentityChanged(_identity);
+  }
+
+  /// An authoritative sign-out. Core disposes the session; the facade lives on
+  /// and every call throws [WincheUnboundException] until the next sign-in.
+  void signOut() {
+    _identity = null;
+    notifyIdentityChanged(null);
+  }
+}
+
+/// True on the web, where there is no filesystem and sembast uses IndexedDB.
+const bool kIsWeb = identical(0, 0.0);
 
 void main() {
-  // winche_database has no sign-in surface of its own; some WincheAuthService
-  // must be registered with the app and announce an identity before the
-  // database is usable. This demo has no real backend to authenticate
-  // against (the sample server hard-codes uid = "user-123" and ignores the
-  // token), so it scripts the sign-in itself — see _HomePageState._auth.
   Winche.initializeApp(
-    options: WincheOptions(databaseEndpoint: Uri.parse(kUri)),
+    options: WincheOptions(
+      databaseEndpoint: Uri.parse(kUri),
+      // The *parent* directory every service keeps its state under. Core hands
+      // out this root and nothing else; `winche_database` composes
+      // `<root>/winche/<storageKey>/` beneath it, so alice and bob get
+      // physically separate stores and neither can read the other's cache.
+      //
+      // Resolved lazily on first store access, so it is never called on the
+      // web — there is no filesystem there, and sembast uses an IndexedDB
+      // database named after the same storageKey instead.
+      directoryResolver: kIsWeb
+          ? null
+          : () async => (await getApplicationSupportDirectory()).path,
+    ),
   );
   runApp(const WincheDemoApp());
 }
@@ -94,16 +150,16 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // A scripted auth service standing in for a real backend — see the note in
-  // `main()`. Only ever touched (and so only ever registered with the app)
-  // when this page actually signs in.
-  late final _auth = ScriptedAuthService(Winche.app);
+  // Stands in for a real auth package — see DemoAuthService. Only ever touched
+  // (and so only ever registered with the app) when this page signs in.
+  late final _auth = DemoAuthService(Winche.app);
 
+  // Persistent, so each identity gets its own on-disk store and a signed-out
+  // user's cache and un-synced writes survive until they sign back in. Set
+  // before the database is ever used — `config` throws once a session has
+  // started.
   late final _db = WincheDatabase.instance
-    ..config = WincheDatabaseConfig(
-      autoReconnect: widget.autoConnect,
-      inMemory: true,
-    );
+    ..config = WincheDatabaseConfig();
 
   StreamSubscription<SyncEvent>? _syncSub;
   StreamSubscription<ConnectionState>? _connSub;
@@ -113,10 +169,16 @@ class _HomePageState extends State<HomePage> {
   bool _connecting = true;
   int _tab = 0;
 
+  /// Who is signed in. Null before the first sign-in and after a sign-out,
+  /// when the database throws [WincheUnboundException] on use.
+  String? _uid;
+
   RecordFilter _filter = RecordFilter.all;
 
   CollectionReference<Record> get _recordsRef {
-    return _db.collection(kCollection).withConverter(Record.converter);
+    return _db
+        .collection(collectionFor(_uid!))
+        .withConverter(Record.converter);
   }
 
   /// Returns the query for the current filter.
@@ -135,7 +197,7 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     if (widget.autoConnect) {
-      _connect();
+      _signIn(kUsers.first);
     }
     // Disabled in widget tests (autoConnect: false): nobody ever signs in, so
     // `_connecting` stays true forever and the spinner shows instead of the
@@ -151,17 +213,41 @@ class _HomePageState extends State<HomePage> {
     // store, sync controller) in the background. Only touch `_auth` if we
     // actually signed in with it, so a never-connected widget test doesn't
     // register an auth service just to sign out of nothing.
-    if (widget.autoConnect) _auth.announce(null);
+    if (widget.autoConnect) _auth.signOut();
     super.dispose();
   }
 
-  Future<void> _connect() async {
+  /// Signs in as [uid], replacing whoever was signed in before.
+  ///
+  /// The interesting part is what this method does *not* do. Core disposes the
+  /// outgoing session and builds a new one — new local store, new socket
+  /// carrying the new token — so the only thing this has to do is remember who
+  /// is signed in and let the record list resubscribe.
+  ///
+  /// `syncEvents` and `connectionStates` are subscribed once, on first sign-in,
+  /// and never again: they are relays that outlive a session, so a user switch
+  /// does not end them. A `snapshots()` stream is not — it completes on the
+  /// switch, which is why `_recordsTab` keys its `StreamBuilder` on `_uid`.
+  Future<void> _signIn(String uid) async {
+    final firstSignIn = _uid == null;
     // Force `_db` into existence (registering it with the app) before
     // announcing sign-in, so the very first session dispatch already
     // includes it — see the ordering note in the README on lazy factories.
     final db = _db;
-    _auth.announce(WincheIdentity(kUid));
+
+    if (mounted) setState(() => _connecting = true);
+    _auth.signIn(uid);
     await Winche.app.settled;
+    if (!mounted) return;
+    setState(() {
+      _uid = uid;
+      _connecting = false;
+    });
+
+    if (!firstSignIn) {
+      await _refreshPending();
+      return; // the relays below are already subscribed and still live
+    }
 
     _syncSub = db.syncEvents.listen((event) {
       _refreshPending();
@@ -175,18 +261,34 @@ class _HomePageState extends State<HomePage> {
       } else if (event is SyncPaused) {
         // Nothing was dropped — the token is dead. A real app would refresh
         // the token in its auth service and announce the rotation there; core
-        // re-dials automatically and the drain resumes on its own. This
-        // sample has a hardcoded scripted token, so nothing to refresh.
+        // re-dials automatically and the drain resumes on its own. This demo's
+        // token is just the uid, so there is nothing to refresh.
         _snack('Sync paused (unauthenticated): ${event.error.message}');
       }
     });
 
-    _connState = db.connectionState;
+    // No manual seed: `connectionStates` delivers the current state on
+    // subscribe, then every change.
     _connSub = db.connectionStates.listen((s) {
       if (mounted) setState(() => _connState = s);
     });
-    if (mounted) setState(() => _connecting = false);
     await _refreshPending();
+  }
+
+  /// Signs out entirely, leaving the database unbound.
+  ///
+  /// The facade survives — every call just throws [WincheUnboundException]
+  /// until somebody signs in again. Note the relays stay subscribed: the
+  /// connection chip goes to `disconnected` rather than freezing on its last
+  /// value, because [StatusRelay] emits a final value on detach.
+  Future<void> _signOut() async {
+    _auth.signOut();
+    await Winche.app.settled;
+    if (!mounted) return;
+    setState(() {
+      _uid = null;
+      _pending = [];
+    });
   }
 
   Future<void> _refreshPending() async {
@@ -377,19 +479,25 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Winche Records'),
         actions: [
-          IconButton(
-            tooltip: 'Server count',
-            icon: const Icon(Icons.tag),
-            onPressed: _showCount,
-          ),
+          if (_uid != null) ...[
+            _userSwitcher(),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Server count',
+              icon: const Icon(Icons.tag),
+              onPressed: _showCount,
+            ),
+          ],
           Center(child: _connStatusChip()),
           const SizedBox(width: 12),
         ],
       ),
       body: _connecting
           ? const Center(child: CircularProgressIndicator())
+          : _uid == null
+          ? _signedOut()
           : IndexedStack(index: _tab, children: [_recordsTab(), _pendingTab()]),
-      floatingActionButton: _tab == 0
+      floatingActionButton: _tab == 0 && _uid != null
           ? FloatingActionButton.extended(
               onPressed: () => _openEditor(),
               icon: const Icon(Icons.add),
@@ -420,14 +528,106 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Switches identity, or signs out.
+  ///
+  /// The whole point of the demo: each user sees only their own records,
+  /// enforced by the server's rules, and core swaps the session underneath
+  /// without this widget tearing anything down itself.
+  Widget _userSwitcher() {
+    // The menu value is a record, not a bare `String?`, and that is not
+    // decoration: PopupMenuButton treats a *null* selection as a cancellation
+    // and calls `onCanceled` instead of `onSelected`, so a "Sign out" item with
+    // `value: null` silently does nothing. `(uid: null)` is a non-null record
+    // that still says "no user".
+    return PopupMenuButton<({String? uid})>(
+      tooltip: 'Signed in as $_uid',
+      onSelected: (choice) =>
+          choice.uid == null ? _signOut() : _signIn(choice.uid!),
+      itemBuilder: (context) => [
+        for (final u in kUsers)
+          PopupMenuItem<({String? uid})>(
+            value: (uid: u),
+            enabled: u != _uid,
+            child: Row(
+              children: [
+                Icon(
+                  u == _uid ? Icons.check : Icons.person_outline,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Text(u),
+              ],
+            ),
+          ),
+        const PopupMenuDivider(),
+        const PopupMenuItem<({String? uid})>(
+          value: (uid: null),
+          child: Row(
+            children: [
+              Icon(Icons.logout, size: 18),
+              SizedBox(width: 8),
+              Text('Sign out'),
+            ],
+          ),
+        ),
+      ],
+      child: Chip(
+        avatar: const Icon(Icons.person, size: 18),
+        label: Text(_uid ?? ''),
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
+  /// Shown while nobody is signed in — the state where every database call
+  /// throws [WincheUnboundException].
+  Widget _signedOut() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.lock_outline,
+            size: 48,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+          const SizedBox(height: 12),
+          Text('Signed out', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            'The database is unbound — every call throws\n'
+            'WincheUnboundException until somebody signs in.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final u in kUsers)
+                FilledButton.tonal(
+                  onPressed: () => _signIn(u),
+                  child: Text('Sign in as $u'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _recordsTab() {
     return Column(
       children: [
         _filterRow(),
         Expanded(
           child: StreamBuilder(
-            // Key forces a new StreamBuilder (and fresh stream) when the filter changes.
-            key: ValueKey(_filter),
+            // Keyed on the user as well as the filter, and the user half is
+            // load-bearing: a `snapshots()` stream *completes* when core swaps
+            // the session, by design — a widget built for alice must not
+            // silently start showing bob's rows. Rebuilding the StreamBuilder
+            // is how the app resubscribes against the new session.
+            key: ValueKey((_uid, _filter)),
             stream: _filteredQuery.snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState ==
