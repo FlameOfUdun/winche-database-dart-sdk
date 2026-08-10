@@ -454,7 +454,7 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "7.0.0"
+    version: "8.0.0"
   xdg_directories:
     dependency: transitive
     description:
