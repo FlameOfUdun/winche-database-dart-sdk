@@ -21,7 +21,7 @@ void main() {
       'subscriptionId': 's',
       'documents': [wireDoc('users/a', wireFields({'n': 1}))],
       'readTime': '2026-06-30T10:00:00+00:00',
-      'resumeToken': 99,
+      'resumeToken': '99:0',
     });
     await pump();
     await sub1.cancel();
@@ -36,7 +36,7 @@ void main() {
     await pump();
 
     final listen = h2.requests.firstWhere((f) => f['type'] == 'listen');
-    expect(listen['resumeToken'], 99);
+    expect(listen['resumeToken'], '99:0');
 
     await sub2.cancel();
     await h2.close();
@@ -68,7 +68,7 @@ void main() {
     h.push({
       'type': 'listen.current',
       'subscriptionId': 's',
-      'resumeToken': 100,
+      'resumeToken': '100:0',
     });
     await pump();
 
@@ -104,7 +104,7 @@ void main() {
     expect(snaps.last.metadata.fromCache, isTrue);
 
     // Covered resume: server says "current" with no document.
-    h.push({'type': 'listen.current', 'subscriptionId': 's', 'resumeToken': 50});
+    h.push({'type': 'listen.current', 'subscriptionId': 's', 'resumeToken': '50:0'});
     await pump();
 
     expect(snaps.last.exists, isTrue,

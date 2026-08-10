@@ -23,6 +23,22 @@ void main() {
       expect(h.db.doc('users/u1/posts/p9').id, 'p9');
     });
 
+    test('WincheDatabase.doc rejects a malformed path', () {
+      final h = FacadeHarness();
+      expect(() => h.db.doc('users'), throwsArgumentError,
+          reason: 'odd segment count is a collection path, not a document');
+      expect(() => h.db.doc('users//u1'), throwsArgumentError);
+      expect(() => h.db.doc('users/.'), throwsArgumentError);
+      expect(() => h.db.doc('users/__reserved__'), throwsArgumentError);
+    });
+
+    test('WincheDatabase.collection rejects a malformed path', () {
+      final h = FacadeHarness();
+      expect(() => h.db.collection('users/u1'), throwsArgumentError,
+          reason: 'even segment count is a document path, not a collection');
+      expect(() => h.db.collection('/users'), throwsArgumentError);
+    });
+
     test('toString', () {
       final h = FacadeHarness();
       expect(h.db.doc('users/u1').toString(), 'DocumentReference(users/u1)');
@@ -35,15 +51,29 @@ void main() {
       expect(parent.path, 'users/u1/posts');
     });
 
-    test('parent throws for a top-level path with no collection', () {
+    test(
+        'a single-segment "document" path is now rejected at construction, '
+        'not later at .parent', () {
+      // Before client-side path validation, doc('users') built successfully
+      // and only failed later, when .parent was called (StateError: no parent
+      // collection). A single segment is never a valid document path (an odd
+      // segment count is a collection shape), so WincheDatabase.doc now
+      // rejects it up front — the StateError path in .parent is unreachable
+      // through this public constructor.
       final h = FacadeHarness();
-      expect(() => h.db.doc('users').parent, throwsA(isA<StateError>()));
+      expect(() => h.db.doc('users'), throwsArgumentError);
     });
 
     test('collection() returns a subcollection reference', () {
       final h = FacadeHarness();
       final sub = h.db.doc('users/u1').collection('posts');
       expect(sub.path, 'users/u1/posts');
+    });
+
+    test('collection() rejects a name that makes the path malformed', () {
+      final h = FacadeHarness();
+      expect(() => h.db.doc('users/u1').collection('__reserved__'),
+          throwsArgumentError);
     });
 
     // -------------------------------------------------------------------------
@@ -222,6 +252,15 @@ void main() {
     test('doc(id) builds a child path', () {
       final h = FacadeHarness();
       expect(h.db.collection('users').doc('u1').path, 'users/u1');
+    });
+
+    test('doc(id) rejects an id that makes the path malformed', () {
+      final h = FacadeHarness();
+      expect(() => h.db.collection('users').doc('__reserved__'),
+          throwsArgumentError);
+      expect(
+          () => h.db.collection('users').doc('a/b'), throwsArgumentError,
+          reason: 'an embedded "/" changes the segment count parity');
     });
 
     test('doc() generates a 32-char alphanumeric id', () {

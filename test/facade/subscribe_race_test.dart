@@ -21,7 +21,7 @@ void main() {
         'subscriptionId': 's',
         'documents': [wireDoc('users/u1', wireFields({'name': 'Alice'}))],
         'readTime': '2026-06-08T10:00:00+00:00',
-        'resumeToken': 7,
+        'resumeToken': '7:0',
       });
       h.respond(f, {'subscriptionId': 's'});
     };
@@ -79,7 +79,7 @@ void main() {
         'subscriptionId': 's',
         'documents': [wireDoc('users/u1', wireFields({'name': 'Alice'}))],
         'readTime': '2026-06-08T10:00:00+00:00',
-        'resumeToken': 1,
+        'resumeToken': '1:0',
       });
       h.push({
         'type': 'listen.delta',
@@ -94,7 +94,7 @@ void main() {
         ],
         'count': 2,
         'readTime': '2026-06-08T10:00:01+00:00',
-        'resumeToken': 2,
+        'resumeToken': '2:0',
       });
       h.respond(f, {'subscriptionId': 's'});
     };

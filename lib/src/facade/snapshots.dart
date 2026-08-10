@@ -225,8 +225,10 @@ class QuerySnapshot<T> {
   /// The read timestamp for this snapshot.
   final DateTime readTime;
 
-  /// The resume token for resuming this listener (see PROTOCOL §7.6).
-  final int? resumeToken;
+  /// The resume token for resuming this listener (see PROTOCOL §7.6). Opaque
+  /// string of the form `"{xid}:{seq}"` — never parse, order, or do
+  /// arithmetic on it.
+  final String? resumeToken;
 
   /// Whether more results are available beyond those in [docs].
   ///

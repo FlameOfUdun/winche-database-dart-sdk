@@ -7,7 +7,7 @@ import 'facade_harness.dart';
 Map<String, Object?> snapshotFrame(
   String subId,
   List<Map<String, Object?>> documents, {
-  required int resumeToken,
+  required String resumeToken,
   String readTime = '2026-06-08T12:00:00+00:00',
 }) =>
     {
@@ -23,7 +23,7 @@ Map<String, Object?> deltaFrame(
   String subId,
   List<Map<String, Object?>> changes, {
   required int count,
-  required int resumeToken,
+  required String resumeToken,
   String readTime = '2026-06-08T12:00:01+00:00',
 }) =>
     {
@@ -90,7 +90,7 @@ void main() {
           wireDoc('users/u1', wireFields({'n': 1})),
           wireDoc('users/u2', wireFields({'n': 2})),
         ],
-        resumeToken: 10));
+        resumeToken: '10:0'));
     await pump();
 
     // First emission is the cache-first (empty) snapshot; the server snapshot
@@ -115,7 +115,7 @@ void main() {
         [
           wireDoc('users/u1', wireFields({'n': 1}))
         ],
-        resumeToken: 1));
+        resumeToken: '1:0'));
     await pump();
 
     h.push(deltaFrame(
@@ -125,7 +125,7 @@ void main() {
               newIndex: 1),
         ],
         count: 2,
-        resumeToken: 2));
+        resumeToken: '2:0'));
     await pump();
 
     expect(events.last.docs.map((d) => d.id), ['u1', 'u2']);
@@ -147,7 +147,7 @@ void main() {
           wireDoc('users/u1', wireFields({'n': 1}),
               updateTime: '2026-06-08T12:00:00+00:00'),
         ],
-        resumeToken: 1));
+        resumeToken: '1:0'));
     await pump();
 
     h.push(deltaFrame(
@@ -162,7 +162,7 @@ void main() {
           ),
         ],
         count: 1,
-        resumeToken: 2));
+        resumeToken: '2:0'));
     await pump();
 
     expect(events.last.docs.single.data(), {'n': 99});
@@ -183,7 +183,7 @@ void main() {
           wireDoc('users/u1', wireFields({'n': 1})),
           wireDoc('users/u2', wireFields({'n': 2})),
         ],
-        resumeToken: 1));
+        resumeToken: '1:0'));
     await pump();
 
     h.push(deltaFrame(
@@ -193,7 +193,7 @@ void main() {
               oldIndex: 1),
         ],
         count: 1,
-        resumeToken: 2));
+        resumeToken: '2:0'));
     await pump();
 
     expect(events.last.docs.map((d) => d.id), ['u1']);
@@ -216,7 +216,7 @@ void main() {
               updateTime: '2026-06-08T12:00:00+00:00'),
           wireDoc('users/u2', wireFields({'n': 2})),
         ],
-        resumeToken: 1));
+        resumeToken: '1:0'));
     await pump();
 
     // u2 removed, u3 added, u1 unchanged (same updateTime → not a change).
@@ -227,7 +227,7 @@ void main() {
               updateTime: '2026-06-08T12:00:00+00:00'),
           wireDoc('users/u3', wireFields({'n': 3})),
         ],
-        resumeToken: 2));
+        resumeToken: '2:0'));
     await pump();
 
     final changes = events.last.docChanges;
@@ -251,7 +251,7 @@ void main() {
         [
           wireDoc('users/u1', wireFields({'n': 1}))
         ],
-        resumeToken: 1));
+        resumeToken: '1:0'));
     await pump();
     expect(events, hasLength(2)); // cache-first (empty) + server snapshot
 
@@ -263,7 +263,7 @@ void main() {
               newIndex: 1),
         ],
         count: 5,
-        resumeToken: 2));
+        resumeToken: '2:0'));
     await pump();
 
     // No snapshot emitted for the mismatched delta; a fresh re-subscribe
@@ -310,7 +310,7 @@ void main() {
         [
           wireDoc('users/u1', wireFields({'n': 1}))
         ],
-        resumeToken: 1));
+        resumeToken: '1:0'));
     await pump();
 
     await sub.cancel();

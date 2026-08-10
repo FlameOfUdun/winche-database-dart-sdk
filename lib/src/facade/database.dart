@@ -357,12 +357,20 @@ final class WincheDatabase extends WincheDatabaseService {
   Future<void> clearPersistence() => _require().store.clear();
 
   /// Returns a [CollectionReference] for [path].
+  ///
+  /// Throws [ArgumentError] if [path] is not a well-formed collection path
+  /// (see `validateCollectionPath`).
   CollectionReference<Map<String, Object?>> collection(String path) {
+    validateCollectionPath(path);
     return CollectionReference._(this, path, Converter._identity);
   }
 
   /// Returns a [DocumentReference] for [path].
+  ///
+  /// Throws [ArgumentError] if [path] is not a well-formed document path
+  /// (see `validateDocumentPath`).
   DocumentReference<Map<String, Object?>> doc(String path) {
+    validateDocumentPath(path);
     return DocumentReference._(this, path, Converter._identity);
   }
 

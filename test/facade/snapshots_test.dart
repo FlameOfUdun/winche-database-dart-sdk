@@ -139,7 +139,7 @@ void main() {
         docs: [docSnap],
         docChanges: [change],
         readTime: readTime,
-        resumeToken: 99,
+        resumeToken: '99:0',
         hasMore: true,
       );
       expect(snap.docs.single.id, 'u1');
@@ -147,7 +147,7 @@ void main() {
       expect(snap.docChanges.single.oldIndex, -1);
       expect(snap.docChanges.single.newIndex, 0);
       expect(snap.readTime, readTime);
-      expect(snap.resumeToken, 99);
+      expect(snap.resumeToken, '99:0');
       expect(snap.hasMore, isTrue);
 
       await h.close();

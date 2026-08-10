@@ -84,7 +84,7 @@ class DocReconnectHarness {
 Map<String, Object?> docSnapshotFrame(
   String subId,
   List<Map<String, Object?>> documents, {
-  required int resumeToken,
+  required String resumeToken,
   String readTime = '2026-06-08T12:00:00+00:00',
 }) => {
   'type': 'listen.snapshot',
@@ -120,7 +120,7 @@ void main() {
       h.channels[0].serverSend(
         docSnapshotFrame('dsub-0', [
           wireDoc('users/u1', wireFields({'n': 1})),
-        ], resumeToken: 10),
+        ], resumeToken: '10:0'),
       );
       await pump();
 
@@ -190,7 +190,7 @@ void main() {
     h.channels[0].serverSend(
       docSnapshotFrame('dsub-0', [
         wireDoc('users/u1', wireFields({'n': 42})),
-      ], resumeToken: 77),
+      ], resumeToken: '77:0'),
     );
     await pump();
 
@@ -208,7 +208,7 @@ void main() {
     );
     expect(
       docListenFrames[ch1]!['resumeToken'],
-      77,
+      '77:0',
       reason: 'reconnect must carry the last resume token',
     );
 
@@ -216,7 +216,7 @@ void main() {
     ch1.serverSend(
       docSnapshotFrame('dsub-1', [
         wireDoc('users/u1', wireFields({'n': 99})),
-      ], resumeToken: 78),
+      ], resumeToken: '78:0'),
     );
     await pump();
 

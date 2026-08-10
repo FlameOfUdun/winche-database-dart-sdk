@@ -77,7 +77,7 @@ class ReconnectHarness {
 Map<String, Object?> snapshotFrame(
   String subId,
   List<Map<String, Object?>> documents, {
-  required int resumeToken,
+  required String resumeToken,
   String readTime = '2026-06-08T12:00:00+00:00',
 }) => {
   'type': 'listen.snapshot',
@@ -122,7 +122,7 @@ void main() {
       h.channels[0].serverSend(
         snapshotFrame('sub-0', [
           wireDoc('users/u1', wireFields({'n': 1})),
-        ], resumeToken: 42),
+        ], resumeToken: '42:0'),
       );
       await pump();
       // Cache-first (empty) emit + the server snapshot.
@@ -141,7 +141,7 @@ void main() {
         isNotNull,
         reason: 'listener should re-subscribe on the new channel',
       );
-      expect(listenFrames[ch1]!['resumeToken'], 42);
+      expect(listenFrames[ch1]!['resumeToken'], '42:0');
 
       // Resumed stream keeps delivering on the new subscription.
       ch1.serverSend(
@@ -151,7 +151,7 @@ void main() {
             wireDoc('users/u1', wireFields({'n': 1})),
             wireDoc('users/u2', wireFields({'n': 2})),
           ],
-          resumeToken: 43,
+          resumeToken: '43:0',
           readTime: '2026-06-08T12:05:00+00:00',
         ),
       );
@@ -183,7 +183,7 @@ void main() {
 
     final sub = h.db.collection('users').snapshots().listen((_) {});
     await pump();
-    h.channels[0].serverSend(snapshotFrame('sub-0', const [], resumeToken: 1));
+    h.channels[0].serverSend(snapshotFrame('sub-0', const [], resumeToken: '1:0'));
     await pump();
 
     await h.channels[0].serverClose();

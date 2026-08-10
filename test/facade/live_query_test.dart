@@ -7,7 +7,7 @@ import 'facade_harness.dart';
 Map<String, Object?> snapshotFrame(
   String subId,
   List<Map<String, Object?>> documents, {
-  int resumeToken = 1,
+  String resumeToken = '1:0',
 }) =>
     {
       'type': 'listen.snapshot',

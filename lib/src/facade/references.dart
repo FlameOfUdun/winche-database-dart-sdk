@@ -37,9 +37,14 @@ final class DocumentReference<T> {
   }
 
   /// Returns a raw (map-typed) reference to a sub-collection named [name].
+  ///
+  /// Throws [ArgumentError] if the resulting path is not a well-formed
+  /// collection path (see `validateCollectionPath`).
   CollectionReference<Map<String, Object?>> collection(String name) {
+    final subPath = '$path/$name';
+    validateCollectionPath(subPath);
     return CollectionReference<Map<String, Object?>>._(
-        _db, '$path/$name', Converter._identity);
+        _db, subPath, Converter._identity);
   }
 
   /// Fetches the document once (from cache when offline).
@@ -134,9 +139,13 @@ final class CollectionReference<T> extends QueryReference<T> {
   /// (carries this collection's converter).
   ///
   /// If [id] is null or empty, a random 32-character ID is generated.
+  /// Throws [ArgumentError] if an explicit [id] yields a path that is not
+  /// well-formed (see `validateDocumentPath`).
   DocumentReference<T> doc([String? id]) {
     final docId = (id == null || id.isEmpty) ? _generateId() : id;
-    return DocumentReference<T>._(_db, '$_collection/$docId', _converter);
+    final fullPath = '$_collection/$docId';
+    if (id != null && id.isNotEmpty) validateDocumentPath(fullPath);
+    return DocumentReference<T>._(_db, fullPath, _converter);
   }
 
   /// Adds a new document with [data] and a generated ID.

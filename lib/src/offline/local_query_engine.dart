@@ -15,6 +15,17 @@ class _OrderKey {
 /// Evaluates a [QuerySpec] over an in-memory document set, matching server
 /// query semantics (PROTOCOL §4). Pure: callers supply the candidate documents
 /// (e.g. effective views from the cache).
+///
+/// **Known divergence from the server (protocol v3):** the server refuses to
+/// let a filter on the reserved metadata names `id`, `path`, `collection`,
+/// `createdAt`, `updatedAt`, `version` prove a `list` rule, so an online query
+/// filtering on one of those fields can be DENIED server-side. This engine
+/// does not replicate that authorization check — offline, the same query is
+/// still served from cache using the filter as written. This is a deliberate,
+/// known difference (not a bug): the offline cache has no rules engine to
+/// consult, and there is no server round trip to deny. `__name__` is
+/// unaffected — it is not one of the reserved names above, and this engine's
+/// handling of it already matches the server.
 class LocalQueryEngine {
   const LocalQueryEngine();
 

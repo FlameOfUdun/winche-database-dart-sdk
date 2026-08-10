@@ -27,7 +27,10 @@ void main() {
   });
 
   test('docListenFrame includes resumeToken when set', () {
-    expect(docListenFrame('3', 'users/u1', resumeToken: 42)['resumeToken'], 42);
+    expect(
+      docListenFrame('3', 'users/u1', resumeToken: '42:0')['resumeToken'],
+      '42:0',
+    );
   });
 
   test('WireChange parses the deleted kind', () {
@@ -52,15 +55,59 @@ void main() {
     expect(docListen['protocol'], wireProtocolVersion);
   });
 
+  test(
+      'resumeToken round-trips as an opaque string through snapshot, delta, '
+      'current, and back out onto a re-subscribe frame', () {
+    // A value shaped like "{xid}:{seq}" where the xid exceeds the safe
+    // integer range of a JSON number (2^53) — the whole reason it is a
+    // string on the wire now. Never parsed, ordered, or done arithmetic on;
+    // this test only checks it survives verbatim.
+    const token = '18446744073709551615:42';
+
+    final snapshot = ServerFrame.parse({
+      'type': 'listen.snapshot',
+      'subscriptionId': 'sub-1',
+      'documents': <Object?>[],
+      'readTime': '2026-06-07T12:00:00+00:00',
+      'resumeToken': token,
+    }) as ListenSnapshotFrame;
+    expect(snapshot.resumeToken, token);
+
+    final delta = ServerFrame.parse({
+      'type': 'listen.delta',
+      'subscriptionId': 'sub-1',
+      'changes': <Object?>[],
+      'count': 0,
+      'readTime': '2026-06-07T12:00:01+00:00',
+      'resumeToken': token,
+    }) as ListenDeltaFrame;
+    expect(delta.resumeToken, token);
+
+    final current = ServerFrame.parse({
+      'type': 'listen.current',
+      'subscriptionId': 'sub-1',
+      'resumeToken': token,
+    }) as ListenCurrentFrame;
+    expect(current.resumeToken, token);
+
+    // Whichever frame supplied the freshest token, it is echoed back verbatim
+    // on the next subscribe/re-subscribe — the client never mutates it.
+    final relisten = listenFrame('4', QuerySpec('users'), resumeToken: token);
+    expect(relisten['resumeToken'], token);
+
+    final redocListen = docListenFrame('5', 'users/u1', resumeToken: token);
+    expect(redocListen['resumeToken'], token);
+  });
+
   test('parses a listen.current frame', () {
     final frame = ServerFrame.parse({
       'type': 'listen.current',
       'subscriptionId': 'sub-1',
-      'resumeToken': 57,
+      'resumeToken': '57:0',
     });
     expect(frame, isA<ListenCurrentFrame>());
     final c = frame as ListenCurrentFrame;
     expect(c.subscriptionId, 'sub-1');
-    expect(c.resumeToken, 57);
+    expect(c.resumeToken, '57:0');
   });
 }

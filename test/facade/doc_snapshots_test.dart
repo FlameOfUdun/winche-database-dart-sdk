@@ -6,7 +6,7 @@ import 'facade_harness.dart';
 Map<String, Object?> snapshotFrame(
   String subId,
   List<Map<String, Object?>> documents, {
-  int? resumeToken,
+  String? resumeToken,
   String readTime = '2026-06-08T12:00:00+00:00',
 }) =>
     {
@@ -57,7 +57,7 @@ void main() {
     h.push(snapshotFrame(
       'sub-1',
       [wireDoc('users/u1', wireFields({'n': 1}))],
-      resumeToken: 1,
+      resumeToken: '1:0',
     ));
     await pump();
 
@@ -76,7 +76,7 @@ void main() {
     final sub = h.db.doc('users/u1').snapshots().listen(events.add);
     await pump();
 
-    h.push(snapshotFrame('sub-1', const [], resumeToken: 1));
+    h.push(snapshotFrame('sub-1', const [], resumeToken: '1:0'));
     await pump();
 
     expect(events.last.exists, isFalse);
@@ -99,7 +99,7 @@ void main() {
         wireDoc('users/u1', wireFields({'n': 1}),
             updateTime: '2026-06-08T12:00:00+00:00'),
       ],
-      resumeToken: 1,
+      resumeToken: '1:0',
     ));
     await pump();
 
@@ -109,7 +109,7 @@ void main() {
         wireDoc('users/u1', wireFields({'n': 2}),
             updateTime: '2026-06-08T13:00:00+00:00'),
       ],
-      resumeToken: 2,
+      resumeToken: '2:0',
     ));
     await pump();
 
@@ -130,7 +130,7 @@ void main() {
     h.push(snapshotFrame(
       'sub-1',
       [wireDoc('users/u1', wireFields({'n': 7}))],
-      resumeToken: 1,
+      resumeToken: '1:0',
     ));
     await pump();
 
@@ -143,7 +143,7 @@ void main() {
     installDocListenHandler();
     final sub = h.db.doc('users/u1').snapshots().listen((_) {});
     await pump();
-    h.push(snapshotFrame('sub-1', const [], resumeToken: 1));
+    h.push(snapshotFrame('sub-1', const [], resumeToken: '1:0'));
     await pump();
 
     await sub.cancel();

@@ -269,7 +269,7 @@ void main() {
       'subscriptionId': 'sub-1',
       'documents': <Object?>[],
       'readTime': '2026-06-08T12:00:00+00:00',
-      'resumeToken': 1,
+      'resumeToken': '1:0',
     });
     await _pump();
 

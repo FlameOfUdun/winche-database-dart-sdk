@@ -1,5 +1,51 @@
 # Changelog
 
+## 8.0.0
+
+**Breaking: wire protocol v3 — `resumeToken` is now an opaque string.** The
+server's change-feed cursor became a (transaction id, seq) pair, and a
+transaction id is an unsigned 64-bit value that does not fit safely in a JSON
+number. `resumeToken` on `listen`, `doc.listen`, `listen.snapshot`,
+`listen.current`, and `listen.delta` is now a string of the form
+`"{xid}:{seq}"` instead of a JSON number. It is, and always was, opaque:
+nothing in this SDK parses, orders, or does arithmetic on it.
+
+### Changed
+
+- **Breaking: `resumeToken` is `String?` everywhere it previously appeared as
+  `int?`** — `QuerySnapshot.resumeToken` (public API), the `ListenSnapshotFrame`
+  / `ListenDeltaFrame` / `ListenCurrentFrame` wire types, and the
+  `docListenFrame` / `listenFrame` frame builders' `resumeToken` parameter.
+- `wireProtocolVersion` moves from 2 to 3. The server **rejects**
+  `listen`/`doc.listen` from any client advertising a lower version or
+  omitting the field.
+- **Persisted resume tokens are dropped once on upgrade, not migrated.** An
+  int-valued token from a pre-8.0 install is meaningless under the new cursor
+  format — there is no way to translate it — so `ResumeTokenStore` silently
+  drops any legacy entry instead of throwing or returning a fabricated
+  position. The affected listener falls back to a fresh subscribe on first
+  use after upgrading, which is safe (just not an efficient resume for that
+  one listener).
+- **New: client-side path validation**, mirroring the server's canonicalization
+  rules so a malformed path fails fast locally instead of round-tripping to an
+  `INVALID_ARGUMENT` error. `WincheDatabase.collection`/`doc`,
+  `DocumentReference.collection`, and `CollectionReference.doc` now validate
+  the resulting path and throw `ArgumentError` (naming the failed rule, never
+  echoing the full path) when it: contains an empty segment (leading, trailing,
+  or doubled `/`); contains a segment equal to `.` or `..`; contains a segment
+  matching `__*__` (reserved); contains a segment exceeding 1500 UTF-8 bytes;
+  or has the wrong segment-count parity (a document path must be even, a
+  collection path odd).
+
+### Known divergence (documented, not fixed)
+
+- The server refuses to let a filter on the reserved metadata names `id`,
+  `path`, `collection`, `createdAt`, `updatedAt`, `version` prove a `list`
+  rule, so such a query can be **denied online**. The offline
+  `LocalQueryEngine` has no rules engine to consult and still serves that same
+  query from cache — this is a deliberate, known difference, not a bug.
+  `__name__` is unaffected; its handling already matches the server.
+
 ## 7.0.0
 
 **Breaking: this release discards every existing local store — again.** Two

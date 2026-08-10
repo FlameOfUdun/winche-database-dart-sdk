@@ -47,7 +47,7 @@ void main() {
           wireFields({'title': 'A', 'priority': 1}),
         ),
       ],
-      resumeToken: 1,
+      resumeToken: '1:0',
     ));
     await pump();
 

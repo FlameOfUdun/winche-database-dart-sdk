@@ -43,7 +43,7 @@ abstract class _LiveFeed {
       StreamController<_FeedUpdate?>.broadcast();
 
   bool _active = false; // a subscription is established and delivering
-  int? _resumeToken;
+  String? _resumeToken;
   String? _subscriptionId;
   StreamSubscription<ServerFrame>? _frames;
   StreamSubscription<ConnectionState>? _stateSub;
@@ -66,7 +66,7 @@ abstract class _LiveFeed {
   // ── Hooks ──────────────────────────────────────────────────────────────────
 
   /// The subscribe frame (`listen` / `doc.listen`) for [resumeToken].
-  Map<String, Object?> _subscribeFrame(int? resumeToken);
+  Map<String, Object?> _subscribeFrame(String? resumeToken);
 
   /// Handles one server frame (snapshot/delta), updating local state and
   /// publishing the new set via [_publish]. Updates [_resumeToken].
@@ -156,7 +156,7 @@ abstract class _LiveFeed {
     if (!_out.isClosed) await _out.close();
   }
 
-  Future<void> _subscribe({required int? resumeToken}) async {
+  Future<void> _subscribe({required String? resumeToken}) async {
     if (_disposed || _permanent) return;
     if (_frames != null) return; // already subscribed
     try {
@@ -227,7 +227,7 @@ final class _QueryFeed extends _LiveFeed {
   List<WireDocument> _docs = [];
 
   @override
-  Map<String, Object?> _subscribeFrame(int? resumeToken) =>
+  Map<String, Object?> _subscribeFrame(String? resumeToken) =>
       listenFrame('', _spec, resumeToken: resumeToken);
 
   @override
@@ -307,7 +307,7 @@ final class _DocumentFeed extends _LiveFeed {
   WireDocument? _doc;
 
   @override
-  Map<String, Object?> _subscribeFrame(int? resumeToken) =>
+  Map<String, Object?> _subscribeFrame(String? resumeToken) =>
       docListenFrame('', _path, resumeToken: resumeToken);
 
   @override

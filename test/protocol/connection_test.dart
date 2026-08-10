@@ -174,7 +174,7 @@ void main() {
       'subscriptionId': 'sub-1',
       'documents': <Object?>[],
       'readTime': '2026-06-07T12:00:00+00:00',
-      'resumeToken': 1,
+      'resumeToken': '1:0',
     });
     fake.serverSend({
       'type': 'listen.delta',
@@ -182,14 +182,14 @@ void main() {
       'changes': <Object?>[],
       'count': 0,
       'readTime': '2026-06-07T12:00:01+00:00',
-      'resumeToken': 2,
+      'resumeToken': '2:0',
     });
     fake.serverSend({
       'type': 'listen.snapshot',
       'subscriptionId': 'sub-1',
       'documents': <Object?>[],
       'readTime': '2026-06-07T12:00:02+00:00',
-      'resumeToken': 3,
+      'resumeToken': '3:0',
     });
 
     await Future<void>.delayed(Duration.zero);

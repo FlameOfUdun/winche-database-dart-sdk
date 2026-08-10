@@ -172,9 +172,7 @@ sealed class ServerFrame {
               WireDocument.fromJson(d as Map<String, Object?>),
           ],
           readTime: req<String>('readTime'),
-          resumeToken: json['resumeToken'] != null
-              ? (json['resumeToken'] as num).toInt()
-              : null,
+          resumeToken: opt<String>('resumeToken'),
         ),
       'listen.delta' => ListenDeltaFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -184,13 +182,11 @@ sealed class ServerFrame {
           ],
           count: req<num>('count').toInt(),
           readTime: req<String>('readTime'),
-          resumeToken: json['resumeToken'] != null
-              ? (json['resumeToken'] as num).toInt()
-              : null,
+          resumeToken: opt<String>('resumeToken'),
         ),
       'listen.current' => ListenCurrentFrame(
           subscriptionId: req<String>('subscriptionId'),
-          resumeToken: req<num>('resumeToken').toInt(),
+          resumeToken: req<String>('resumeToken'),
         ),
       _ => UnknownFrame(type, json),
     };
@@ -246,7 +242,11 @@ final class ListenSnapshotFrame extends ServerFrame {
 
   /// Raw metadata timestamp string.
   final String readTime;
-  final int? resumeToken;
+
+  /// Opaque cursor of the form `"{xid}:{seq}"`. Never parse, order, or do
+  /// arithmetic on this — treat it as an opaque string to echo back verbatim
+  /// on resume.
+  final String? resumeToken;
 }
 
 /// `{"type": "listen.delta", ...}` — incremental mutation (PROTOCOL §7.6).
@@ -265,7 +265,11 @@ final class ListenDeltaFrame extends ServerFrame {
 
   /// Raw metadata timestamp string.
   final String readTime;
-  final int? resumeToken;
+
+  /// Opaque cursor of the form `"{xid}:{seq}"`. Never parse, order, or do
+  /// arithmetic on this — treat it as an opaque string to echo back verbatim
+  /// on resume.
+  final String? resumeToken;
 }
 
 /// `{"type": "listen.current", "subscriptionId": "...", "resumeToken": ...}`
@@ -277,7 +281,11 @@ final class ListenCurrentFrame extends ServerFrame {
   });
 
   final String subscriptionId;
-  final int resumeToken;
+
+  /// Opaque cursor of the form `"{xid}:{seq}"`. Never parse, order, or do
+  /// arithmetic on this — treat it as an opaque string to echo back verbatim
+  /// on resume.
+  final String resumeToken;
 }
 
 /// A frame type not recognized by this client version.
@@ -325,7 +333,13 @@ Map<String, Object?> countFrame(String id, QuerySpec query) => {
 
 /// The wire protocol version this SDK speaks. v2 introduces the `deleted`
 /// change kind; the server only emits `deleted` to clients advertising >= 2.
-const int wireProtocolVersion = 2;
+/// v3 changes `resumeToken` (on `listen`, `doc.listen`, `listen.snapshot`,
+/// `listen.current`, `listen.delta`) from a JSON number to an opaque string of
+/// the form `"{xid}:{seq}"` — the change-feed cursor became a (transaction id,
+/// seq) pair, and a transaction id is an unsigned 64-bit value that does not
+/// fit safely in a JSON number. The server REJECTS `listen`/`doc.listen` from
+/// any client advertising a lower version or omitting the field.
+const int wireProtocolVersion = 3;
 
 /// `{"type": "aggregate", "id": "...", "query": {...}, "aggregations": [...]}`
 Map<String, Object?> aggregateFrame(
@@ -338,7 +352,7 @@ Map<String, Object?> aggregateFrame(
     };
 
 /// `{"type": "doc.listen", "id": "...", "path": "...", "protocol": ..., "resumeToken"?: ...}`
-Map<String, Object?> docListenFrame(String id, String path, {int? resumeToken}) {
+Map<String, Object?> docListenFrame(String id, String path, {String? resumeToken}) {
   final frame = <String, Object?>{
     'type': 'doc.listen',
     'id': id,
@@ -402,7 +416,7 @@ Map<String, Object?> txRollbackFrame(String id, String transactionId) => {
 Map<String, Object?> listenFrame(
   String id,
   QuerySpec query, {
-  int? resumeToken,
+  String? resumeToken,
 }) {
   final frame = <String, Object?>{
     'type': 'listen',

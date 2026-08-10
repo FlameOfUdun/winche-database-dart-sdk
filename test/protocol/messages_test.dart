@@ -112,8 +112,8 @@ void main() {
     });
 
     test('listenFrame — with resumeToken', () {
-      final f = listenFrame('s1', QuerySpec('users'), resumeToken: 42);
-      expect(f['resumeToken'], equals(42));
+      final f = listenFrame('s1', QuerySpec('users'), resumeToken: '42:0');
+      expect(f['resumeToken'], equals('42:0'));
     });
 
     test('unlistenFrame', () {
@@ -200,13 +200,13 @@ void main() {
           },
         ],
         'readTime': '2026-06-07T12:00:00+00:00',
-        'resumeToken': 57,
+        'resumeToken': '57:0',
       });
       expect(frame, isA<ListenSnapshotFrame>());
       final snap = frame as ListenSnapshotFrame;
       expect(snap.subscriptionId, equals('sub-xyz'));
       expect(snap.documents.length, equals(1));
-      expect(snap.resumeToken, equals(57));
+      expect(snap.resumeToken, equals('57:0'));
     });
 
     test('listen.delta frame — PROTOCOL §8.6', () {
@@ -231,7 +231,7 @@ void main() {
         ],
         'count': 3,
         'readTime': '2026-06-07T12:00:01+00:00',
-        'resumeToken': 58,
+        'resumeToken': '58:0',
       });
       expect(frame, isA<ListenDeltaFrame>());
       final delta = frame as ListenDeltaFrame;
@@ -297,7 +297,7 @@ void main() {
         ],
         'count': 3,
         'readTime': '2026-06-07T12:00:01+00:00',
-        'resumeToken': 58,
+        'resumeToken': '58:0',
       }) as ListenDeltaFrame;
       expect(frame.changes[0].kind, equals(ChangeKind.added));
     });
@@ -322,16 +322,17 @@ void main() {
       );
     });
 
-    test('Minor 6 — listen.snapshot resumeToken is typed as int', () {
+    test('Minor 6 — listen.snapshot resumeToken is typed as an opaque String',
+        () {
       final frame = ServerFrame.parse({
         'type': 'listen.snapshot',
         'subscriptionId': 'sub-1',
         'documents': <Object?>[],
         'readTime': '2026-06-07T12:00:00+00:00',
-        'resumeToken': 99,
+        'resumeToken': '99:0',
       }) as ListenSnapshotFrame;
-      expect(frame.resumeToken, isA<int>());
-      expect(frame.resumeToken, equals(99));
+      expect(frame.resumeToken, isA<String>());
+      expect(frame.resumeToken, equals('99:0'));
     });
 
     test('I4 — welcome frame with string protocol throws FormatException', () {
