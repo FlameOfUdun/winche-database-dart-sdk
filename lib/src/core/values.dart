@@ -311,7 +311,8 @@ final class TimestampValue extends Value {
     final h = dt.hour.toString().padLeft(2, '0');
     final mi = dt.minute.toString().padLeft(2, '0');
     final s = dt.second.toString().padLeft(2, '0');
-    final us = dt.microsecond.toString().padLeft(6, '0');
+    // DateTime splits the fraction: millisecond (0–999) and microsecond (0–999).
+    final us = (dt.millisecond * 1000 + dt.microsecond).toString().padLeft(6, '0');
     return '$y-$mo-${d}T$h:$mi:$s.${us}Z';
   }
 

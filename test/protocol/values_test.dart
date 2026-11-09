@@ -100,6 +100,24 @@ void main() {
       expect(wire['timestampValue'], equals('2026-06-07T12:34:56.000123Z'));
     });
 
+    test('milliseconds preserved', () {
+      final dt = DateTime.utc(2026, 6, 7, 12, 34, 56, 789, 123);
+      final wire = TimestampValue(dt).toJson() as Map;
+      expect(wire['timestampValue'], equals('2026-06-07T12:34:56.789123Z'));
+    });
+
+    test('milliseconds only', () {
+      final dt = DateTime.utc(2026, 6, 7, 12, 34, 56, 5);
+      final wire = TimestampValue(dt).toJson() as Map;
+      expect(wire['timestampValue'], equals('2026-06-07T12:34:56.005000Z'));
+    });
+
+    test('a DateTime survives the wire round trip', () {
+      final dt = DateTime.utc(2026, 11, 9, 11, 42, 41, 123, 82);
+      final back = TimestampValue.parse((TimestampValue(dt).toJson() as Map)['timestampValue'] as String);
+      expect(back.value, equals(dt));
+    });
+
     test('zero microseconds produces 000000', () {
       final dt = DateTime.utc(2026, 6, 7, 12, 34, 56);
       final v = TimestampValue(dt);
