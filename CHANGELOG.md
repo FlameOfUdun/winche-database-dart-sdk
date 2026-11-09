@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.0.1
+
+**Fix: timestamps lost their milliseconds.** `TimestampValue` wrote only
+`DateTime.microsecond` (the 0–999 µs remainder) as the fraction, so
+`12:34:56.789123` went over the wire as `12:34:56.000123`. Every `DateTime`
+field written since 1.0.0 is stored up to 999 ms early. Values written from now
+on keep full microsecond precision; data already stored is not corrected.
+
 ## 7.0.0
 
 **Breaking: this release discards every existing local store — again.** Two
