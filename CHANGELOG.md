@@ -1,5 +1,21 @@
 # Changelog
 
+## 7.1.0
+
+**Fix: a dead connection no longer hangs requests.** A socket can die without
+the OS noticing for minutes (a Wi-Fi to cellular switch, a device waking from
+sleep). Requests then waited indefinitely and reads never fell back to the
+cache, because pings were skipped while a request was in flight and their
+replies were never checked.
+
+- Requests time out after `WincheDatabaseConfig.requestTimeout` (default 60 s)
+  with `UnavailableException`, so `Source.serverOrCache` reads fall back to the
+  cache.
+- Pings go out even with requests in flight. A socket that has received nothing
+  for two ping intervals plus 15 s is dropped and re-dialled.
+- New: `WincheDatabase.verifyConnection()` pings and, if there is no reply within
+  5 s, replaces the socket at once. Call it when the app returns to the foreground.
+
 ## 7.0.2
 
 **Fix: a token refresh no longer drops the connection.** `onTokenChanged` used to
