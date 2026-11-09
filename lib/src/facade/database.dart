@@ -245,6 +245,19 @@ final class WincheDatabase extends WincheDatabaseService {
   Future<void> onTokenChanged() async {
     final session = _session;
     if (session == null) return;
+
+    // The server authenticates a socket when it opens, so a ready socket keeps
+    // working after the token rotates, and the next dial (any reconnect) reads
+    // the fresh token from the provider. Re-dialling on every rotation — every
+    // few minutes with short-lived access tokens — failed every in-flight
+    // request and made retried writes trip their own preconditions. Re-dial
+    // only when the socket isn't ready or a listener was stopped by an auth
+    // error, which a fresh token can fix.
+    final authFailed = session.listeners.any((l) => l._hasPermanentFailure);
+    if (session.transport.connectionState == ConnectionState.ready && !authFailed) {
+      return;
+    }
+
     // From 5.0's reconnect(): clear the latches before re-dialling, so the
     // transition to `ready` the successful dial emits finds every feed willing
     // to resubscribe.

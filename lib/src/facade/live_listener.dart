@@ -73,6 +73,8 @@ abstract class _LiveListener<TSnapshot> {
   /// Driven by [WincheDatabase.onTokenChanged] when the auth token rotates.
   void _clearPermanentFailure() => _feed?._clearPermanentFailure();
 
+  bool get _hasPermanentFailure => _feed?._permanent ?? false;
+
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   /// Emits the current effective snapshot, unless this listener is cancelled or

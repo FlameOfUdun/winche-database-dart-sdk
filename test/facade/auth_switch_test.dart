@@ -74,7 +74,7 @@ class _AuthHarness {
 
 void main() {
   group('reconnect()', () {
-    test('re-dials with a freshly read token', () async {
+    test('keeps a ready socket on a token rotation; the next dial reads the fresh token', () async {
       var token = 'token-a';
       final h = _AuthHarness(tokenProvider: () => token);
       h.handler = (c, f) => h.respond(c, f, {});
@@ -89,9 +89,18 @@ void main() {
 
       expect(
         h.tokens,
-        ['token-a', 'token-b'],
-        reason: 'reconnect must re-read tokenProvider, not reuse the socket',
+        ['token-a'],
+        reason: 'a ready socket stays open: re-dialling on every rotation fails in-flight requests',
       );
+      expect(h.db.connectionState, ConnectionState.ready);
+
+      // The socket drops (network change, server deploy): the re-dial uses the new token.
+      await h.channels.last.serverClose();
+      await pump();
+      await h.db.doc('users/u1').get(const GetOptions(source: Source.server));
+      await pump();
+
+      expect(h.tokens, ['token-a', 'token-b'], reason: 'reconnect must re-read tokenProvider');
       expect(h.db.connectionState, ConnectionState.ready);
 
       await h.close();
