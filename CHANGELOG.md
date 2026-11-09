@@ -1,5 +1,15 @@
 # Changelog
 
+## 7.0.2
+
+**Fix: a token refresh no longer drops the connection.** `onTokenChanged` used to
+re-dial on every access-token rotation, which with short-lived tokens meant every
+few minutes. Each re-dial failed every in-flight request: reads fell back to the
+cache, and re-sent writes could trip their own `updateTime` preconditions. The
+server authenticates a socket when it opens, so a ready socket is now kept, and
+the next dial (after any drop) reads the fresh token. It still re-dials straight
+away when the socket isn't ready or a listener was stopped by an auth error.
+
 ## 7.0.1
 
 **Fix: timestamps lost their milliseconds.** `TimestampValue` wrote only
