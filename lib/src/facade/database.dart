@@ -9,8 +9,14 @@ const bool _kIsWeb = identical(0, 0.0);
 /// local-store selection, and sync policy. Mirrors `winche_storage`'s
 /// `WincheStorageConfig`.
 final class WincheDatabaseConfig {
-  /// Keep-alive ping interval. Defaults to 30 seconds.
+  /// Keep-alive ping interval. Defaults to 30 seconds. A socket that receives
+  /// nothing for two intervals (plus 15 seconds) is treated as dead and replaced.
   final Duration pingInterval;
+
+  /// How long a request waits for the server before failing as unavailable, so
+  /// reads fall back to the cache instead of hanging. Defaults to 60 seconds;
+  /// [Duration.zero] disables it.
+  final Duration requestTimeout;
 
   /// Maximum backoff between reconnect attempts. Defaults to 30 seconds.
   final Duration maxBackoff;
@@ -38,6 +44,7 @@ final class WincheDatabaseConfig {
 
   const WincheDatabaseConfig({
     this.pingInterval = const Duration(seconds: 30),
+    this.requestTimeout = const Duration(seconds: 60),
     this.maxBackoff = const Duration(seconds: 30),
     this.maxFrameBytes = 1 << 20,
     this.inMemory = false,
@@ -162,6 +169,7 @@ final class WincheDatabase extends WincheDatabaseService {
           return token;
         },
         pingInterval: _config.pingInterval,
+        requestTimeout: _config.requestTimeout,
         maxBackoff: _config.maxBackoff,
         maxFrameBytes: _config.maxFrameBytes,
       ),
@@ -265,6 +273,18 @@ final class WincheDatabase extends WincheDatabaseService {
       l._clearPermanentFailure();
     }
     await session.transport.reconnect();
+  }
+
+  /// Checks that the live connection still answers, and replaces it if not.
+  ///
+  /// A socket can die without either side noticing (network switch, a device
+  /// waking from sleep); requests then wait until they time out. Call this when
+  /// the app returns to the foreground: it pings the server and, if there is no
+  /// reply within [timeout], drops the socket so the client reconnects at once.
+  /// Returns whether the connection answered; false when signed out or offline.
+  Future<bool> verifyConnection({Duration timeout = const Duration(seconds: 5)}) async {
+    final transport = _session?.transport;
+    return transport is WsTransport ? transport.verify(timeout: timeout) : false;
   }
 
   /// Returns the active session, or throws [WincheUnboundException] if no

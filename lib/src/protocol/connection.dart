@@ -29,6 +29,8 @@ final class ConnectionConfig {
     required this.uri,
     this.tokenProvider,
     this.pingInterval = const Duration(seconds: 30),
+    this.requestTimeout = const Duration(seconds: 60),
+    this.livenessTimeout,
     this.maxBackoff = const Duration(seconds: 30),
     this.maxFrameBytes = 1 << 20,
     this.channelFactory,
@@ -45,6 +47,19 @@ final class ConnectionConfig {
 
   /// Interval for keep-alive pings. Defaults to 30 seconds.
   final Duration pingInterval;
+
+  /// How long a request waits for its response before failing with
+  /// [UnavailableException] (so a read falls back to the cache instead of
+  /// hanging). [Duration.zero] disables it. Defaults to 60 seconds.
+  final Duration requestTimeout;
+
+  /// A ready socket that has received nothing for this long is treated as dead
+  /// (e.g. after a Wi-Fi → cellular switch the OS may not notice for minutes):
+  /// it is dropped and the usual reconnect loop runs. Pings keep a healthy socket
+  /// talking. Defaults to two ping intervals plus 15 seconds.
+  final Duration? livenessTimeout;
+
+  Duration get effectiveLivenessTimeout => livenessTimeout ?? pingInterval * 2 + const Duration(seconds: 15);
 
   /// Maximum backoff between reconnect attempts.
   final Duration maxBackoff;
@@ -141,7 +156,9 @@ class ProtocolConnection {
   Completer<void>? _welcomeCompleter;
 
   Timer? _pingTimer;
-  int _requestsInFlight = 0;
+
+  /// When the last frame arrived from the server; see [ConnectionConfig.livenessTimeout].
+  DateTime _lastInbound = DateTime.now();
 
 
   /// Returns the dial URI with the current auth token (if any) added as the
@@ -231,11 +248,51 @@ class ProtocolConnection {
     final tagged = Map<String, Object?>.of(frame)..['id'] = id;
     final completer = Completer<Map<String, Object?>>();
     _pending[id] = completer;
-    _requestsInFlight++;
     _enqueueSend(tagged);
-    return completer.future.whenComplete(() {
-      _requestsInFlight--;
-    });
+    var future = completer.future;
+    final timeout = config.requestTimeout;
+    if (timeout > Duration.zero) {
+      future = future.timeout(timeout, onTimeout: () {
+        _pending.remove(id);
+        throw UnavailableException('No response within ${timeout.inSeconds}s');
+      });
+    }
+    return future;
+  }
+
+  /// Checks that the socket still answers: sends a ping and, if no reply comes
+  /// within [timeout], drops the socket so the reconnect loop takes over. Call it
+  /// when the app returns to the foreground, where a silently dead socket is
+  /// most likely. Returns whether the connection answered.
+  Future<bool> verify({Duration timeout = const Duration(seconds: 5)}) async {
+    if (_state != ConnectionState.ready) return false;
+    final id = _nextId();
+    final completer = Completer<Map<String, Object?>>();
+    _pending[id] = completer;
+    _enqueueSend(pingFrame(id));
+    try {
+      await completer.future.timeout(timeout);
+      return true;
+    } catch (_) {
+      _pending.remove(id);
+      if (_state == ConnectionState.ready) _dropDeadSocket('ping unanswered for ${timeout.inSeconds}s');
+      return false;
+    }
+  }
+
+  /// Takes down a socket that stopped answering and lets [_onDone] fail pending
+  /// requests and start the reconnect loop, as for any drop.
+  void _dropDeadSocket(String reason) {
+    final channel = _channel;
+    final sub = _sub;
+    _sub = null;
+    unawaited(sub?.cancel());
+    unawaited(Future(() async {
+      try {
+        await channel?.sink.close().timeout(const Duration(seconds: 1));
+      } catch (_) {}
+    }));
+    _onDone();
   }
 
   /// Returns a broadcast stream of listener frames for [subscriptionId].
@@ -430,6 +487,7 @@ class ProtocolConnection {
 
 
   void _onFrame(Object? data) {
+    _lastInbound = DateTime.now();
     if (data is! String) {
       // Binary frames should not arrive but if they do, ignore.
       return;
@@ -610,9 +668,16 @@ class ProtocolConnection {
 
 
   void _startPing() {
+    _pingTimer?.cancel();
+    _lastInbound = DateTime.now();
     _pingTimer = Timer.periodic(config.pingInterval, (_) {
       if (_state != ConnectionState.ready) return;
-      if (_requestsInFlight > 0) return; // skip ping while request in flight
+      if (DateTime.now().difference(_lastInbound) > config.effectiveLivenessTimeout) {
+        _dropDeadSocket('nothing received for ${config.effectiveLivenessTimeout.inSeconds}s');
+        return;
+      }
+      // Pinged even while requests are in flight: a request waiting on a dead
+      // socket is exactly when liveness matters.
       final id = _nextId();
       _enqueueSend(pingFrame(id));
       // We don't await the ping response — it's fire-and-forget for keepalive.

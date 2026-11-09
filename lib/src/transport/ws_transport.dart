@@ -87,6 +87,14 @@ final class WsTransport implements Transport {
     return connection;
   }
 
+  /// Pings the server and drops the socket if it doesn't answer within
+  /// [timeout] (see [ProtocolConnection.verify]). False when not connected.
+  Future<bool> verify({Duration timeout = const Duration(seconds: 5)}) async {
+    final c = _connection;
+    if (c == null) return false;
+    return c.verify(timeout: timeout);
+  }
+
   @override
   Future<void> reconnect() async {
     if (_disposed) {
