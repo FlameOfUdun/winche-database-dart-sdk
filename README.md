@@ -355,7 +355,8 @@ flowchart TD
   Q --> Dr[SyncController drains]
   Dr -->|ack| SY["WriteSynced"]
   Dr -->|version conflict| CO["WriteConflict<br/>retry / discard / overwrite"]
-  Dr -->|permission / etc| FA["WriteFailed (dropped)"]
+  Dr -->|permission denied / invalid| FA["WriteFailed (dropped)"]
+  Dr -->|server error / busy / unknown| RT["SyncRetrying<br/>stays queued, retried with backoff"]
   Dr -->|unauthenticated| PA["SyncPaused<br/>stays queued, resumes when the session redials"]
   Dr -->|offline| OF["stays queued, retries on reconnect"]
 ```
@@ -368,10 +369,15 @@ db.syncEvents.listen((e) {
     // ConflictPolicy.manual (default): resolve explicitly
     e.discard(); // or e.retry() / e.overwrite()
   } else if (e is WriteFailed) {
-    // permanent (e.g. permission denied); dropped from the queue.
+    // permanent: PERMISSION_DENIED, INVALID_ARGUMENT, INVALID_QUERY, or a
+    // conflict auto-resolution couldn't settle; dropped from the queue.
     // e.writes carries the dropped entries in full — this is the only place
     // they still exist, so capture them here if the work matters.
     print(e.error);
+  } else if (e is SyncRetrying) {
+    // The server answered with an error that says nothing about the write
+    // (INTERNAL, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, ABORTED, …): nothing was
+    // dropped; the queue retries in e.retryIn (backing off up to a minute).
   } else if (e is SyncPaused) {
     // The token is dead; nothing was dropped. This package has no reconnect()
     // of its own any more — refresh the token in your auth service and

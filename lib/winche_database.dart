@@ -58,6 +58,7 @@ export 'src/offline/sync_event.dart'
         WriteConflict,
         WriteFailed,
         SyncPaused,
+        SyncRetrying,
         ConflictPolicy;
 export 'src/offline/records.dart' show PendingWrite, PendingKind, PendingBase;
 

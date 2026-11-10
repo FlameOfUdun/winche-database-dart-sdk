@@ -260,4 +260,107 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(fired, isNotEmpty);
   });
+
+  group('a rejection that says nothing about the write (7.2.0)', () {
+    Map<String, Object?> ok(Map<String, Object?> _) => {
+          'writeResults': [
+            {'updateTime': '2026-06-08T12:00:00+00:00', 'transformResults': null}
+          ]
+        };
+
+    for (final status in [
+      'INTERNAL',
+      'DEADLINE_EXCEEDED',
+      'RESOURCE_EXHAUSTED',
+      'ABORTED',
+      'SOME_FUTURE_STATUS',
+    ]) {
+      test('$status keeps the write queued and retries it until it lands',
+          () async {
+        sync = SyncController(transport, cache, queue,
+            retryDelay: (_) => const Duration(milliseconds: 20));
+        var calls = 0;
+        transport.responder = (f) {
+          calls++;
+          if (calls <= 2) {
+            throw WincheProtocolException.fromError(status, 'try later');
+          }
+          return ok(f);
+        };
+        await queue.enqueue(SetWrite('users/u1', {'n': const IntegerValue(1)}),
+            localCommitTime: DateTime.utc(2026));
+        final events = <SyncEvent>[];
+        sync.events.listen(events.add);
+
+        await sync.drain();
+        expect(await queue.hasPending(), isTrue); // not dropped
+
+        await sync.waitForPendingWrites().timeout(const Duration(seconds: 5));
+        expect(calls, 3);
+        await Future<void>.delayed(Duration.zero);
+        final retries = events.whereType<SyncRetrying>().toList();
+        expect(retries.map((e) => e.attempt), [1, 2]);
+        expect(retries.first.error.status, status);
+        expect(retries.first.paths, ['users/u1']);
+        expect(events.whereType<WriteFailed>(), isEmpty);
+        expect(events.last, isA<WriteSynced>());
+        await sync.dispose();
+      });
+    }
+
+    test('the writes behind it wait their turn (order is kept)', () async {
+      sync = SyncController(transport, cache, queue,
+          retryDelay: (_) => const Duration(milliseconds: 20));
+      var failed = false;
+      final order = <String>[];
+      transport.responder = (f) {
+        final path = (((f['writes'] as List).single as Map).values.first as Map)['path'] as String;
+        if (!failed) {
+          failed = true;
+          throw WincheProtocolException.fromError('INTERNAL', 'blip');
+        }
+        order.add(path);
+        return ok(f);
+      };
+      await queue.enqueue(SetWrite('users/a', {'n': const IntegerValue(1)}), localCommitTime: DateTime.utc(2026));
+      await queue.enqueue(SetWrite('users/b', {'n': const IntegerValue(2)}), localCommitTime: DateTime.utc(2026));
+
+      await sync.drain();
+      await sync.waitForPendingWrites().timeout(const Duration(seconds: 5));
+      expect(order, ['users/a', 'users/b']);
+      await sync.dispose();
+    });
+
+    test('a verdict on the write still drops it', () async {
+      transport.responder = (f) =>
+          throw WincheProtocolException.fromError('PERMISSION_DENIED', 'no');
+      await queue.enqueue(SetWrite('users/u1', {'n': const IntegerValue(1)}),
+          localCommitTime: DateTime.utc(2026));
+      final events = <SyncEvent>[];
+      sync.events.listen(events.add);
+      await sync.drain();
+      expect(await queue.hasPending(), isFalse);
+      await Future<void>.delayed(Duration.zero);
+      expect(events.single, isA<WriteFailed>());
+    });
+
+    test('backs off 1 s, 2 s, 4 s … up to a minute', () {
+      expect([for (var i = 1; i <= 9; i++) SyncController.defaultRetryDelay(i).inSeconds],
+          [1, 2, 4, 8, 16, 32, 60, 60, 60]);
+    });
+
+    test('dispose stops a pending retry', () async {
+      sync = SyncController(transport, cache, queue,
+          retryDelay: (_) => const Duration(milliseconds: 50));
+      transport.responder = (f) =>
+          throw WincheProtocolException.fromError('INTERNAL', 'blip');
+      await queue.enqueue(SetWrite('users/u1', {'n': const IntegerValue(1)}),
+          localCommitTime: DateTime.utc(2026));
+      await sync.drain();
+      await sync.dispose();
+      final before = transport.requests.length;
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(transport.requests.length, before);
+    });
+  });
 }

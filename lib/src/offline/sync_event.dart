@@ -98,6 +98,28 @@ final class WriteFailed extends SyncEvent {
   final String? batchId;
 }
 
+/// The server rejected the head unit with an error that says nothing about the
+/// write itself (`INTERNAL`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`, `ABORTED`,
+/// or a status this client doesn't know). Nothing is dropped: the queue keeps it
+/// and drains again after [retryIn] (backing off, up to a minute), or sooner on a
+/// reconnect. Before 7.2.0 such a write was dropped as a [WriteFailed].
+final class SyncRetrying extends SyncEvent {
+  const SyncRetrying({
+    required this.paths,
+    required this.error,
+    required this.attempt,
+    required this.retryIn,
+  });
+
+  /// The document path(s) of the unit being retried.
+  final List<String> paths;
+  final WincheProtocolException error;
+
+  /// Consecutive failed attempts (1 the first time).
+  final int attempt;
+  final Duration retryIn;
+}
+
 /// The queue is stalled because the server rejected the head unit with
 /// `UNAUTHENTICATED` — the token is missing, expired, or no longer valid.
 ///

@@ -1,5 +1,21 @@
 # Changelog
 
+## 7.2.0
+
+**Fix: a server error no longer drops a queued write.** Any rejection other
+than a conflict used to remove the write from the offline queue and report
+`WriteFailed` — so a brief server problem (`INTERNAL`, a server-side timeout,
+`RESOURCE_EXHAUSTED`, `ABORTED`) silently lost work recorded offline.
+
+- Only verdicts on the write itself drop it: `PERMISSION_DENIED`,
+  `INVALID_ARGUMENT`, `INVALID_QUERY` (and conflicts, as before).
+- Any other status — including ones this version doesn't know — keeps the whole
+  queue in order and retries after a backoff (1 s, 2 s, 4 s … up to 60 s), or
+  sooner on a reconnect. A replay carries the write's version precondition, so a
+  write that did apply comes back as a conflict, not twice.
+- New `SyncRetrying` event (`paths`, `error`, `attempt`, `retryIn`). `SyncEvent`
+  is sealed: an exhaustive `switch` over it needs a case (or `default`) for it.
+
 ## 7.1.0
 
 **Fix: a dead connection no longer hangs requests.** A socket can die without

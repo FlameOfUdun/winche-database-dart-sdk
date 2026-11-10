@@ -29,8 +29,34 @@ class SyncController {
     this._queue, {
     ConflictPolicy conflictPolicy = ConflictPolicy.manual,
     LocalChangeNotifier? changeNotifier,
+    Duration Function(int attempt) retryDelay = defaultRetryDelay,
   })  : _policy = conflictPolicy,
-        _changes = changeNotifier;
+        _changes = changeNotifier,
+        _retryDelay = retryDelay;
+
+  /// 1 s, 2 s, 4 s … capped at 60 s.
+  static Duration defaultRetryDelay(int attempt) =>
+      Duration(seconds: attempt >= 7 ? 60 : 1 << (attempt - 1));
+
+  final Duration Function(int attempt) _retryDelay;
+
+  /// Consecutive transient rejections of the head unit (see [_transientRetry]);
+  /// reset by the next successful write.
+  int _retryAttempts = 0;
+  Timer? _retryTimer;
+
+  /// Rejections that are a verdict on the write itself: it will never succeed as
+  /// sent, so it is dropped and reported as [WriteFailed]. Anything else the
+  /// server answers — `INTERNAL`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`,
+  /// `ABORTED`, or a status this client doesn't know — says nothing about the
+  /// write, so it stays queued and is retried ([SyncRetrying]). A replay carries
+  /// the write's version precondition, so one that did apply comes back as a
+  /// conflict rather than applying twice.
+  static const _permanentStatuses = {
+    'PERMISSION_DENIED',
+    'INVALID_ARGUMENT',
+    'INVALID_QUERY',
+  };
 
   final Transport _transport;
   final DocumentCache _cache;
@@ -180,10 +206,16 @@ class SyncController {
       _emitAuthStall(unit, e);
       return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
     } on WincheProtocolException catch (e) {
+      if (!_conflictStatuses.contains(e.status) &&
+          !_permanentStatuses.contains(e.status)) {
+        _transientRetry(unit, e);
+        return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
+      }
       await _handleError(unit, key, e);
       return (outcome: _DrainOutcome.mutated, rebases: const <String, String>{});
     }
     _authStalled = false;
+    _retryAttempts = 0;
 
     final writeResults = result['writeResults'] as List<Object?>? ?? const [];
     final rebases = <String, String>{};
@@ -289,6 +321,25 @@ class SyncController {
     'ALREADY_EXISTS',
     'NOT_FOUND',
   };
+
+  /// Keeps the whole queue (order matters) and drains again after a backoff —
+  /// the connection is still up, so no reconnect would trigger it.
+  void _transientRetry(List<PendingWrite> unit, WincheProtocolException e) {
+    if (_disposed) return;
+    _retryAttempts++;
+    final delay = _retryDelay(_retryAttempts);
+    _emit(SyncRetrying(
+      paths: [for (final p in unit) p.path],
+      error: e,
+      attempt: _retryAttempts,
+      retryIn: delay,
+    ));
+    _retryTimer?.cancel();
+    _retryTimer = Timer(delay, () {
+      _retryTimer = null;
+      drain();
+    });
+  }
 
   /// Reports the queue as stalled on authentication, once per stall.
   void _emitAuthStall(List<PendingWrite> unit, UnauthenticatedException e) {
@@ -491,6 +542,8 @@ class SyncController {
 
   Future<void> dispose() async {
     _disposed = true;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     await _stateSub?.cancel();
     // Let an in-flight drain unwind (it breaks out at its next loop check)
     // before the caller closes the store underneath it. The timeout is a
