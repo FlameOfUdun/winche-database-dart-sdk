@@ -1,3 +1,5 @@
+import '../core/paths.dart';
+import '../protocol/query_spec.dart';
 import '../protocol/writes.dart';
 import 'local_store.dart';
 import 'records.dart';
@@ -60,6 +62,20 @@ class WriteQueue {
 
   /// Pending writes grouped by document path, restricted to documents whose
   /// immediate parent collection is [collectionPath].
+  /// Pending entries for documents of every collection with id [collectionId].
+  Future<Map<String, List<PendingWrite>>> byPathInCollectionGroup(String collectionId) async {
+    final out = <String, List<PendingWrite>>{};
+    for (final p in await all()) {
+      if (inCollectionGroup(p.path, collectionId)) (out[p.path] ??= []).add(p);
+    }
+    return out;
+  }
+
+  /// Pending entries a query reads: its collection, or its collection group.
+  Future<Map<String, List<PendingWrite>>> byPathFor(QuerySpec spec) => spec.collectionGroup
+      ? byPathInCollectionGroup(spec.collection)
+      : byPathInCollection(spec.collection);
+
   Future<Map<String, List<PendingWrite>>> byPathInCollection(
       String collectionPath) async {
     final depth = collectionPath.split('/').length + 1;

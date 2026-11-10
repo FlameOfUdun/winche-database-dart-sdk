@@ -198,9 +198,16 @@ class QuerySpec {
     this.select,
     this.start,
     this.end,
+    this.collectionGroup = false,
   });
 
+  /// The collection path (e.g. `users/u1/notes`) — or, when [collectionGroup], a
+  /// collection id (`notes`): every collection with that id, under any parent.
   final String collection;
+
+  /// Query every collection named [collection], under any parent (server
+  /// 10.5.0+). Rules must cover every parent: `match {path=**}/notes/{id}`.
+  final bool collectionGroup;
   final FilterSpec? where;
   final List<OrderSpec>? orderBy;
   final int? limit;
@@ -221,6 +228,10 @@ class QuerySpec {
   /// throwing [ArgumentError] on violation — mirrors the server's
   /// `INVALID_ARGUMENT`. Called before every send and local evaluation.
   void validate() {
+    if (collectionGroup && (collection.isEmpty || collection.contains('/'))) {
+      throw ArgumentError(
+          'A collection group query takes a collection id (one segment), got "$collection".');
+    }
     if (limitToLast != null) {
       if (limit != null) {
         throw ArgumentError('limit and limitToLast are mutually exclusive.');
@@ -237,6 +248,7 @@ class QuerySpec {
   Map<String, Object?> toJson() {
     validate();
     final map = <String, Object?>{'collection': collection};
+    if (collectionGroup) map['collectionGroup'] = true;
     if (where != null) map['where'] = where!.toJson();
     if (orderBy != null) {
       map['orderBy'] = [for (final o in orderBy!) o.toJson()];
@@ -269,5 +281,6 @@ class QuerySpec {
         select: select ?? this.select,
         start: start ?? this.start,
         end: end ?? this.end,
+        collectionGroup: collectionGroup,
       );
 }

@@ -394,6 +394,17 @@ final class WincheDatabase extends WincheDatabaseService {
     return CollectionReference._(this, path, Converter._identity);
   }
 
+  /// A query over every collection with id [collectionId], under any parent —
+  /// e.g. `collectionGroup('sessionHistory')` reads every user's history at once
+  /// (server 10.5.0+). Filter, order, limit, listen and count as for one
+  /// collection. Access rules must cover every parent
+  /// (`match {path=**}/sessionHistory/{id}`); declare an index with
+  /// `ib.AddGroup(...)` on the server.
+  QueryReference<Map<String, Object?>> collectionGroup(String collectionId) {
+    final spec = QuerySpec(collectionId, collectionGroup: true)..validate();
+    return QueryReference._(this, collectionId, spec, Converter._identity);
+  }
+
   /// Returns a [DocumentReference] for [path].
   DocumentReference<Map<String, Object?>> doc(String path) {
     return DocumentReference._(this, path, Converter._identity);

@@ -332,7 +332,7 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
     if (_serverDocs != null) return _serverDocs!;
     final members = await _session.targets.members(_spec);
     if (members != null) return _resolveMembers(members);
-    return _session.cache.confirmedInCollection(_spec.collection);
+    return _session.cache.confirmedFor(_spec);
   }
 
   Future<List<WireDocument>> _resolveMembers(List<String> paths) async {
@@ -345,7 +345,7 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
   }
 
   Future<Map<String, List<PendingWrite>>> _pendingByPath() =>
-      _session.queue.byPathInCollection(_spec.collection);
+      _session.queue.byPathFor(_spec);
 
   /// Ordered-list diff by path + updateTimeRaw (added/modified/removed change set).
   static List<DocumentChange<T>> _diff<T>(

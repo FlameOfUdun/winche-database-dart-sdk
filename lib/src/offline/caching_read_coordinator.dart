@@ -203,9 +203,9 @@ class CachingReadCoordinator implements ReadCoordinator {
       final members = await _targets?.members(spec);
       base = members != null
           ? await _resolveMembers(members)
-          : await _cache.confirmedInCollection(spec.collection);
+          : await _cache.confirmedFor(spec);
     }
-    final byPath = await _queue.byPathInCollection(spec.collection);
+    final byPath = await _queue.byPathFor(spec);
     final view = buildEffectiveView(base, byPath);
     var docs = _query.runQuery(spec, view.docs);
     if (spec.select != null) {

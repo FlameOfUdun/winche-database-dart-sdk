@@ -2,6 +2,11 @@
 
 ## 7.2.0
 
+**New: collection group queries.** `db.collectionGroup('notes')` queries every
+`notes` collection under any parent (wire `"collectionGroup": true`; needs server
+10.5.0+). Works for `get`, `snapshots` and `count`, and offline over the cache
+(including pending writes).
+
 **Fix: a server error no longer drops a queued write.** Any rejection other
 than a conflict used to remove the write from the offline queue and report
 `WriteFailed` — so a brief server problem (`INTERNAL`, a server-side timeout,

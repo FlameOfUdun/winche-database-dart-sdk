@@ -299,6 +299,23 @@ optimization.
 
 ---
 
+### Collection groups
+
+`collectionGroup(id)` queries every collection with that id, under any parent —
+every user's `sessionHistory` at once — and composes like any query (`where`,
+`orderBy`, `limit`, `get`, `snapshots`, `count`; offline it runs over the cache).
+Needs server 10.5.0+; access rules must cover every parent
+(`match {path=**}/sessionHistory/{id}`), and the server should declare a group
+index (`ib.AddGroup(...)`).
+
+```dart
+final recent = await db.collectionGroup('sessionHistory')
+    .where('classId', isEqualTo: 'c1')
+    .orderBy('finishedAt', descending: true)
+    .limit(50)
+    .get();
+```
+
 ## Real-time listeners
 
 `snapshots()` returns a stream that emits an immediate cache-first snapshot, then

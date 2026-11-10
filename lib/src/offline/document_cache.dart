@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import '../core/paths.dart';
 import '../protocol/messages.dart';
+import '../protocol/query_spec.dart';
 import 'eviction_manager.dart';
 import 'local_store.dart';
 import 'records.dart';
@@ -86,6 +88,23 @@ class DocumentCache {
   }
 
   /// All confirmed live documents directly in [collectionPath].
+  /// Confirmed documents of every collection with id [collectionId] (a
+  /// collection group). Scans the cache: the store indexes by parent path only.
+  Future<List<WireDocument>> confirmedInCollectionGroup(String collectionId) async {
+    final records = await store.allDocuments();
+    return [
+      for (final r in records)
+        if (CachedDocument.fromRecord(r)
+            case CachedDocument(deleted: false, :final document?))
+          if (inCollectionGroup(document.path, collectionId)) document,
+    ];
+  }
+
+  /// Confirmed documents a query reads: its collection, or its collection group.
+  Future<List<WireDocument>> confirmedFor(QuerySpec spec) => spec.collectionGroup
+      ? confirmedInCollectionGroup(spec.collection)
+      : confirmedInCollection(spec.collection);
+
   Future<List<WireDocument>> confirmedInCollection(
       String collectionPath) async {
     final records = await store.documentsInCollection(collectionPath);

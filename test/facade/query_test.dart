@@ -10,6 +10,22 @@ void main() {
 
   QueryReference<Map<String, Object?>> users() => h.db.collection('users');
 
+  group('collectionGroup', () {
+    test('queries every collection with the id, and composes like any query', () {
+      final q = h.db.collectionGroup('notes').where('owner', isEqualTo: 'u1').orderBy('n').limit(5);
+      final json = q.spec.toJson();
+      expect(json['collection'], 'notes');
+      expect(json['collectionGroup'], isTrue);
+      expect(json['limit'], 5);
+      expect(q.spec.where!.toJson()['field'], 'owner');
+    });
+
+    test('takes a collection id, not a path', () {
+      expect(() => h.db.collectionGroup('users/u1/notes'), throwsArgumentError);
+      expect(() => h.db.collectionGroup(''), throwsArgumentError);
+    });
+  });
+
   // ===========================================================================
   // where() — operator → wire mapping
   // ===========================================================================
