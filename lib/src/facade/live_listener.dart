@@ -98,7 +98,7 @@ abstract class _LiveListener<TSnapshot> {
     // Bind here rather than at construction, so a consumer subscribing while
     // signed out receives a stream error it can render instead of an exception
     // thrown into whatever called `snapshots()`.
-    final session = _db._session;
+    final session = _db._currentSession();
     if (session == null) {
       final controller = _controller;
       _controller = null;

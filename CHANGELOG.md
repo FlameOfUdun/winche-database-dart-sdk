@@ -1,5 +1,18 @@
 # Changelog
 
+## 7.3.0
+
+**New: signed-out access.** `WincheDatabaseConfig(allowSignedOut: true)` lets the
+database work while nobody is signed in — and in an app with no auth service at
+all: requests go without a token and the server's rules decide
+(`request.auth == null`). The signed-out session caches in memory only and is
+replaced when someone signs in. Off by default; nothing changes without it.
+
+**Fix: a session that can't be built no longer leaves the previous one bound.**
+If building a signed-in user's session failed (no `directoryResolver`, say), the
+earlier session stayed bound under the new identity; now it's dropped and the
+error reported.
+
 ## 7.2.0
 
 **New: collection group queries.** `db.collectionGroup('notes')` queries every

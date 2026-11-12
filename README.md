@@ -563,6 +563,33 @@ db.config = const WincheDatabaseConfig(inMemory: true);
 
 ---
 
+## Signed-out access
+
+By default the database is bound to whoever is signed in, and throws
+`WincheUnboundException` while nobody is. To read (or write) as a signed-out
+caller — public data, or an app with no sign-in at all:
+
+```dart
+db.config = const WincheDatabaseConfig(allowSignedOut: true);
+```
+
+Requests then go without a token, and the server's rules decide what a
+signed-out caller may do:
+
+```
+match public/{doc} {
+  allow read: if true;                       // anyone
+  allow write: if request.auth != null;      // signed-in users
+}
+```
+
+The signed-out session caches in memory only (nothing on disk is shared with a
+user's cache), and it ends when someone signs in: its streams complete, as on
+any user switch, so resubscribe on `authStateChanges`. No auth service is
+needed for this — `WincheDatabase` works with none registered.
+
+---
+
 ## Cache management
 
 The local cache stays consistent with the server and can be bounded.

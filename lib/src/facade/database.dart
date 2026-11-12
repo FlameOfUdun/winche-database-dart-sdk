@@ -42,6 +42,15 @@ final class WincheDatabaseConfig {
   /// triggers eviction).
   final int? cacheSizeBytes;
 
+  /// Use the database while nobody is signed in (default false): requests go
+  /// without a token, and the server's rules decide what a signed-out caller
+  /// may read or write (`request.auth == null`). For public data — a
+  /// catalogue, a feed — or an app with no sign-in at all.
+  ///
+  /// The signed-out session keeps its cache in memory only, and ends when
+  /// someone signs in: its streams complete, as on any user switch.
+  final bool allowSignedOut;
+
   const WincheDatabaseConfig({
     this.pingInterval = const Duration(seconds: 30),
     this.requestTimeout = const Duration(seconds: 60),
@@ -51,6 +60,7 @@ final class WincheDatabaseConfig {
     this.conflictPolicy = ConflictPolicy.manual,
     this.maxCachedDocuments,
     this.cacheSizeBytes,
+    this.allowSignedOut = false,
   });
 }
 
@@ -150,10 +160,19 @@ final class WincheDatabase extends WincheDatabaseService {
     }
 
     final endpoint = app.options?.databaseEndpoint;
-    if (endpoint == null) {
-      throw StateError(
-        'WincheOptions.databaseEndpoint is required to use winche_database.',
-      );
+    final LocalStore store;
+    try {
+      if (endpoint == null) {
+        throw StateError(
+          'WincheOptions.databaseEndpoint is required to use winche_database.',
+        );
+      }
+      store = _storeFor(session);
+    } catch (_) {
+      // Whatever was bound — a previous user's session, or a signed-out one —
+      // must not stay bound under the new identity.
+      await _clearSession()?.dispose();
+      rethrow;
     }
 
     await _bind(
@@ -173,7 +192,7 @@ final class WincheDatabase extends WincheDatabaseService {
         maxBackoff: _config.maxBackoff,
         maxFrameBytes: _config.maxFrameBytes,
       ),
-      _storeFor(session),
+      store,
       _config.conflictPolicy,
       maxCachedDocuments: _config.maxCachedDocuments,
       cacheSizeBytes: _config.cacheSizeBytes,
@@ -300,10 +319,37 @@ final class WincheDatabase extends WincheDatabaseService {
   /// signs in, and reading that chip must not lock [config] or throw
   /// [WincheUnboundException].
   _DatabaseSession _require() {
-    final session = _session;
+    final session = _currentSession();
     if (session == null) throw WincheUnboundException();
     _started = true;
     return session;
+  }
+
+  /// The bound session; or, with [WincheDatabaseConfig.allowSignedOut] and
+  /// nobody signed in, a signed-out one bound now — no token, memory-only
+  /// cache. Null when there's neither.
+  _DatabaseSession? _currentSession() {
+    final session = _session;
+    if (session != null || !_config.allowSignedOut || isDisposed) return session;
+    final endpoint = app.options?.databaseEndpoint;
+    if (endpoint == null) {
+      throw StateError('WincheOptions.databaseEndpoint is required to use winche_database.');
+    }
+    // No previous session, so _bind completes synchronously and _session is set on return.
+    unawaited(_bind(
+      ConnectionConfig(
+        uri: endpoint,
+        pingInterval: _config.pingInterval,
+        requestTimeout: _config.requestTimeout,
+        maxBackoff: _config.maxBackoff,
+        maxFrameBytes: _config.maxFrameBytes,
+      ),
+      MemoryLocalStore(),
+      _config.conflictPolicy,
+      maxCachedDocuments: _config.maxCachedDocuments,
+      cacheSizeBytes: _config.cacheSizeBytes,
+    ));
+    return _session;
   }
 
   /// Builds the local store for [session] according to [_config].
