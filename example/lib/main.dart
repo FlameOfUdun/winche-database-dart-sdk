@@ -6,6 +6,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
+import 'expand_demo.dart';
+
 const kUri = 'ws://localhost:5183/documents/v1/ws';
 
 /// The two identities this demo can sign in as.
@@ -505,7 +507,11 @@ class _HomePageState extends State<HomePage> {
           ? const Center(child: CircularProgressIndicator())
           : _uid == null
           ? _signedOut()
-          : IndexedStack(index: _tab, children: [_recordsTab(), _pendingTab()]),
+          : IndexedStack(index: _tab, children: [
+              _recordsTab(),
+              _pendingTab(),
+              ExpandDemo(db: _db, uid: _uid!, otherUid: kUsers.firstWhere((u) => u != _uid)),
+            ]),
       floatingActionButton: _tab == 0 && _uid != null
           ? FloatingActionButton.extended(
               onPressed: () => _openEditor(),
@@ -531,6 +537,10 @@ class _HomePageState extends State<HomePage> {
               child: const Icon(Icons.sync_problem),
             ),
             label: 'Pending',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.account_tree),
+            label: 'Expand',
           ),
         ],
       ),
