@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:test/test.dart';
 import 'package:winche_database/winche_database.dart';
 
@@ -122,5 +123,19 @@ void main() {
     expect((snaps.last.docs.single.data()!['patient'] as DocumentSnapshot).data()!['name'], 'Annie');
     expect(snaps.last.docChanges, isEmpty, reason: 'the results themselves did not change');
     await sub.cancel();
+  });
+
+  test('an expanded get shows the user\'s own writes the server has not confirmed yet', () async {
+    h.handler = (f) {
+      // Writes are never acknowledged here: they stay pending.
+      if (f['type'] == 'doc.get') h.respond(f, {'document': null, 'included': <String, Object?>{}});
+    };
+    unawaited(h.db.doc('visits/new').set({'note': 'just written', 'patient': h.db.doc('patients/p1')}));
+    await pump();
+    final snap = await h.db.doc('visits/new').expand(['patient']).get();
+    expect(snap.exists, isTrue);
+    expect(snap.data()!['note'], 'just written');
+    expect(snap.metadata.hasPendingWrites, isTrue);
+    expect(snap.data()!['patient'], 'patients/p1', reason: 'not included by the server yet: a path');
   });
 }

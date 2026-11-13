@@ -71,8 +71,12 @@ final class DocumentReference<T> {
       try {
         final result = await _db._transport.request(docGetFrame('', path, expand: expand));
         final doc = result['document'];
-        if (doc == null) return DocumentSnapshot<T>._missing(this);
-        return DocumentSnapshot<T>._fromWire(this, WireDocument.fromJson(doc as Map<String, Object?>),
+        // The user's own writes not yet confirmed show, as in a plain get().
+        final pending = await _db._require().queue.forPath(path);
+        final eff = applyOverlay(doc == null ? null : WireDocument.fromJson(doc as Map<String, Object?>), pending);
+        final metadata = SnapshotMetadata(hasPendingWrites: eff.hasPendingWrites);
+        if (eff.document == null) return DocumentSnapshot<T>._missing(this, metadata: metadata);
+        return DocumentSnapshot<T>._fromWire(this, eff.document!, metadata: metadata,
             included: includedOf(result['included']) ?? const {}, expand: _splitExpand(expand));
       } on WincheDatabaseException catch (e) {
         if (e.code != WincheErrorCode.unavailable || options.source == Source.server) rethrow;
@@ -439,11 +443,18 @@ final class QueryReference<T> {
     final result = await _db._transport.request(queryFrame('', _spec, expand: expand));
     final included = includedOf(result['included']) ?? const <String, WireDocument>{};
     final paths = _splitExpand(expand);
-    final docs = [
+    final server = [
       for (final d in (result['documents'] as List<Object?>? ?? const []))
-        if (d is Map<String, Object?>)
-          DocumentSnapshot<T>._fromWire(_db.doc(d['path'] as String).withConverter(_converter), WireDocument.fromJson(d),
-              included: included, expand: paths),
+        if (d is Map<String, Object?>) WireDocument.fromJson(d),
+    ];
+    // The user's own writes not yet confirmed show, as in a plain get() (and a listener).
+    final view = buildEffectiveView(server, await _db._require().queue.byPathFor(_spec));
+    final ordered = const LocalQueryEngine().runQuery(_spec, view.docs);
+    final metadata = SnapshotMetadata(hasPendingWrites: view.anyPending);
+    final docs = [
+      for (final wire in ordered)
+        DocumentSnapshot<T>._fromWire(_db.doc(wire.path).withConverter(_converter), wire,
+            metadata: metadata, included: included, expand: paths),
     ];
     return QuerySnapshot<T>(
       docs: List.unmodifiable(docs),
@@ -454,6 +465,7 @@ final class QueryReference<T> {
       readTime: DateTime.now().toUtc(),
       resumeToken: null,
       hasMore: result['hasMore'] == true,
+      metadata: metadata,
     );
   }
 
