@@ -11,6 +11,19 @@ String _generateId() {
   );
 }
 
+/// The referenced documents [roots] reach through [paths], as this device sees
+/// them: the server's ([fromServer], when given: a path it left out is missing
+/// or not readable) or the cache's, each with the user's own unsynced writes on
+/// top (so a document they just made, or changed offline, shows).
+Future<Map<String, WireDocument>> _includedLocally(WincheDatabase db, Iterable<WireDocument?> roots, List<List<String>> paths,
+    {Map<String, WireDocument>? fromServer}) {
+  final session = db._require();
+  return walkReferences(roots, paths, (path) async {
+    final base = fromServer != null ? fromServer[path] : await session.cache.confirmed(path);
+    return applyOverlay(base, await session.queue.forPath(path)).document;
+  });
+}
+
 /// Splits expand paths into their fields.
 List<List<String>>? _splitExpand(List<String>? expand) =>
     expand == null || expand.isEmpty ? null : [for (final p in expand) p.split('.')];
@@ -71,19 +84,34 @@ final class DocumentReference<T> {
       try {
         final result = await _db._transport.request(docGetFrame('', path, expand: expand));
         final doc = result['document'];
+        final fromServer = includedOf(result['included']) ?? const <String, WireDocument>{};
+        final root = doc == null ? null : WireDocument.fromJson(doc as Map<String, Object?>);
+        // Written through like a plain get(), referenced documents too, so they're there offline.
+        final cache = _db._require().cache;
+        if (root == null) {
+          await cache.putConfirmedDeleted(path, formatMetaTimestamp(DateTime.now()));
+        } else {
+          await cache.putConfirmedAll([root, ...fromServer.values]);
+        }
         // The user's own writes not yet confirmed show, as in a plain get().
         final pending = await _db._require().queue.forPath(path);
-        final eff = applyOverlay(doc == null ? null : WireDocument.fromJson(doc as Map<String, Object?>), pending);
+        final eff = applyOverlay(root, pending);
         final metadata = SnapshotMetadata(hasPendingWrites: eff.hasPendingWrites);
         if (eff.document == null) return DocumentSnapshot<T>._missing(this, metadata: metadata);
+        final paths = _splitExpand(expand)!;
         return DocumentSnapshot<T>._fromWire(this, eff.document!, metadata: metadata,
-            included: includedOf(result['included']) ?? const {}, expand: _splitExpand(expand));
+            included: await _includedLocally(_db, [eff.document], paths, fromServer: fromServer), expand: paths);
       } on WincheDatabaseException catch (e) {
         if (e.code != WincheErrorCode.unavailable || options.source == Source.server) rethrow;
       }
     }
     final result = await _db.reads.getDocument(path, options);
-    return _db._snapshotFrom(this, result);
+    final snapshot = _db._snapshotFrom(this, result);
+    if (expand == null || expand.isEmpty || result.document == null) return snapshot;
+    // Offline (or from the cache): references followed through what's cached.
+    final paths = _splitExpand(expand)!;
+    return DocumentSnapshot<T>._fromWire(this, result.document!, metadata: snapshot.metadata,
+        included: await _includedLocally(_db, [result.document], paths), expand: paths);
   }
 
   /// Replaces or merges the document with [data].
@@ -410,13 +438,17 @@ final class QueryReference<T> {
       }
     }
     final result = await _db.reads.runQuery(_spec, options);
+    // Offline (or from the cache), an expanded query follows references through what's cached.
+    final paths = _splitExpand(expand);
+    final included = paths == null ? null : await _includedLocally(_db, result.documents, paths);
     final docs = [
       for (final wire in result.documents)
         DocumentSnapshot<T>._fromWire(
             _db.doc(wire.path).withConverter(_converter), wire,
             metadata: SnapshotMetadata(
                 fromCache: result.fromCache,
-                hasPendingWrites: result.hasPendingWrites)),
+                hasPendingWrites: result.hasPendingWrites),
+            included: included, expand: paths),
     ];
     final changes = [
       for (var i = 0; i < docs.length; i++)
@@ -441,16 +473,22 @@ final class QueryReference<T> {
 
   Future<QuerySnapshot<T>> _getExpanded(List<String> expand) async {
     final result = await _db._transport.request(queryFrame('', _spec, expand: expand));
-    final included = includedOf(result['included']) ?? const <String, WireDocument>{};
-    final paths = _splitExpand(expand);
+    final fromServer = includedOf(result['included']) ?? const <String, WireDocument>{};
+    final paths = _splitExpand(expand)!;
     final server = [
       for (final d in (result['documents'] as List<Object?>? ?? const []))
         if (d is Map<String, Object?>) WireDocument.fromJson(d),
     ];
+    // Written through like a plain get() (results, their membership, and the referenced documents), so offline
+    // reads of this query find them.
+    final session = _db._require();
+    await session.cache.putConfirmedAll([...server, ...fromServer.values]);
+    await session.targets.setMembers(_spec, [for (final d in server) d.path]);
     // The user's own writes not yet confirmed show, as in a plain get() (and a listener).
     final view = buildEffectiveView(server, await _db._require().queue.byPathFor(_spec));
     final ordered = const LocalQueryEngine().runQuery(_spec, view.docs);
     final metadata = SnapshotMetadata(hasPendingWrites: view.anyPending);
+    final included = await _includedLocally(_db, ordered, paths, fromServer: fromServer);
     final docs = [
       for (final wire in ordered)
         DocumentSnapshot<T>._fromWire(_db.doc(wire.path).withConverter(_converter), wire,

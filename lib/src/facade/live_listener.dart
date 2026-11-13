@@ -299,11 +299,16 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
       fromCache: !_serverActive,
       hasPendingWrites: view.anyPending,
     );
+    final expand = _splitExpand(_expand);
+    // Live, the server's referenced documents; offline, the cache's; either way
+    // with the user's own unsynced writes on top.
+    final included = expand == null ? null
+        : await _includedLocally(_db, shaped, expand, fromServer: _serverActive ? _included : null);
     final newDocs = [
       for (final wire in shaped)
         DocumentSnapshot<T>._fromWire(
             _db.doc(wire.path).withConverter(_converter), wire,
-            metadata: metadata, included: _included, expand: _splitExpand(_expand)),
+            metadata: metadata, included: included, expand: expand),
     ];
 
     final changes = _first
@@ -461,9 +466,13 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
       hasPendingWrites: eff.hasPendingWrites,
     );
     if (controller.isClosed) return;
+    final expand = _splitExpand(_expand);
+    final included = expand == null || eff.document == null ? null
+        : await _includedLocally(_db, [eff.document], expand, fromServer: _serverActive ? _included : null);
+    if (controller.isClosed) return;
     controller.add(eff.document == null
         ? DocumentSnapshot<T>._missing(_ref, metadata: metadata)
         : DocumentSnapshot<T>._fromWire(_ref, eff.document!,
-            metadata: metadata, included: _included, expand: _splitExpand(_expand)));
+            metadata: metadata, included: included, expand: expand));
   }
 }

@@ -334,7 +334,11 @@ db.collection('visits').where('ward', isEqualTo: 'icu').expand(['patient']).snap
 - A reference whose document is missing, or that the rules don't let the user read, stays a path (`String`).
 - Live: when a referenced document changes, the listener emits a new snapshot (a query's `docChanges` are empty when
   only referenced documents changed).
-- Expanded reads need the server: offline, `get()` reads from the cache with references as paths.
+- **Offline:** expanded reads follow references through the cache, so what was read before (by an expanded read or a
+  listener, which both cache the referenced documents) still shows, `fromCache`; anything never cached stays a path.
+  The user's own unsynced writes show in referenced documents too, at once: a doctor renamed offline, or one created
+  offline and pointed to. Back online, an expanded listener starts with a full snapshot (never a resume), so changes
+  made elsewhere while away arrive.
 
 ## Real-time listeners
 

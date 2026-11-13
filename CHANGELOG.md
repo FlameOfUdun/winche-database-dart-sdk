@@ -20,6 +20,8 @@ deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseExcep
   fields on `get()` and `snapshots()` (server `expand`, PROTOCOL §7.7). In `data()` an expanded reference is its
   document's `DocumentSnapshot` instead of its path; `snapshot.included` lists them. Live, a change to a referenced
   document emits a new snapshot (no `docChanges` when the results didn't change). Needs Winche.Database with `expand`.
+  Offline, references are followed through the cache (expanded reads and listeners cache what they include), with the
+  user's unsynced writes on referenced documents too; an expanded listener never resumes, so it catches up in full.
 
 ## 7.3.0
 

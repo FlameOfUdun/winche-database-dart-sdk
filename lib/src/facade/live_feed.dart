@@ -257,7 +257,9 @@ final class _QueryFeed extends _LiveFeed {
 
   @override
   Map<String, Object?> _subscribeFrame(int? resumeToken) =>
-      listenFrame('', _spec, resumeToken: resumeToken, expand: _expand);
+      // An expanded subscription always starts over (the server would anyway): its referenced documents may have
+      // changed while away, and a resume ("you're current") would keep the old ones.
+      listenFrame('', _spec, resumeToken: _expand == null ? resumeToken : null, expand: _expand);
 
   @override
   void _handleFrame(ServerFrame frame) {
@@ -337,7 +339,7 @@ final class _DocumentFeed extends _LiveFeed {
 
   @override
   Map<String, Object?> _subscribeFrame(int? resumeToken) =>
-      docListenFrame('', _path, resumeToken: resumeToken, expand: _expand);
+      docListenFrame('', _path, resumeToken: _expand == null ? resumeToken : null, expand: _expand);
 
   @override
   void _handleFrame(ServerFrame frame) {

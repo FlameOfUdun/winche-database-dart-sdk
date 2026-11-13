@@ -138,4 +138,89 @@ void main() {
     expect(snap.metadata.hasPendingWrites, isTrue);
     expect(snap.data()!['patient'], 'patients/p1', reason: 'not included by the server yet: a path');
   });
+
+  group('on this device', () {
+    final doctorV1 = wireDoc('doctors/d1', {'name': {'stringValue': 'Dr Who'}});
+    final patientDoc = wireDoc('patients/p1', {'name': {'stringValue': 'Ann'}, 'doctor': ref('doctors/d1')});
+    String? doctorOf(DocumentSnapshot<Map<String, Object?>> s) {
+      final p = s.data()!['patient'];
+      if (p is! DocumentSnapshot) return null;
+      final d = p.data()!['doctor'];
+      return d is DocumentSnapshot ? d.data()!['name'] as String? : 'PATH';
+    }
+
+    test('referenced documents from an expanded get are cached, and an offline expanded get follows them there', () async {
+      var online = true;
+      h.handler = (f) {
+        if (f['type'] == 'doc.get') {
+          if (!online) return h.respondError(f, 'UNAVAILABLE', 'down');
+          if (f['path'] == 'visits/v1') {
+            h.respond(f, {'document': visit, 'included': {'patients/p1': patientDoc, 'doctors/d1': doctorV1}});
+          } else {
+            h.respond(f, {'document': null});
+          }
+        }
+      };
+      final ref = h.db.doc('visits/v1').expand(['patient.doctor']);
+      expect(doctorOf(await ref.get()), 'Dr Who');
+
+      // From the cache only (and offline): the same references, followed through the cache.
+      final cached = await ref.get(const GetOptions(source: Source.cache));
+      expect(cached.metadata.fromCache, isTrue);
+      expect(doctorOf(cached), 'Dr Who');
+
+      online = false;
+      final offline = await ref.get();
+      expect(offline.metadata.fromCache, isTrue);
+      expect(doctorOf(offline), 'Dr Who');
+    });
+
+    test('an expanded query read online is followed through the cache offline', () async {
+      var online = true;
+      h.handler = (f) {
+        if (f['type'] == 'query') {
+          if (!online) return h.respondError(f, 'UNAVAILABLE', 'down');
+          h.respond(f, {'documents': [visit], 'hasMore': false, 'included': {'patients/p1': patientDoc, 'doctors/d1': doctorV1}});
+        }
+      };
+      final query = h.db.collection('visits').expand(['patient.doctor']);
+      expect(doctorOf((await query.get()).docs.single), 'Dr Who');
+      online = false;
+      final offline = await query.get();
+      expect(offline.metadata.fromCache, isTrue);
+      expect(doctorOf(offline.docs.single), 'Dr Who');
+    });
+
+    test("the user's unsynced change to a referenced document shows in expanded reads", () async {
+      h.handler = (f) {
+        // Writes stay unacknowledged; reads answer what the server has.
+        if (f['type'] == 'doc.get') h.respond(f, {'document': visit, 'included': {'patients/p1': patientDoc, 'doctors/d1': doctorV1}});
+      };
+      unawaited(h.db.doc('doctors/d1').update({'name': 'Dr Offline'}));
+      await pump();
+      final snap = await h.db.doc('visits/v1').expand(['patient.doctor']).get();
+      expect(doctorOf(snap), 'Dr Offline');
+    });
+
+    test("a live expanded listener shows the user's unsynced change to a referenced document at once", () async {
+      h.handler = (f) {
+        if (f['type'] == 'doc.listen') h.respond(f, {'subscriptionId': 's'});
+      };
+      final snaps = <DocumentSnapshot<Map<String, Object?>>>[];
+      final sub = h.db.doc('visits/v1').expand(['patient.doctor']).snapshots().listen(snaps.add);
+      await pump();
+      h.push({
+        'type': 'listen.snapshot', 'subscriptionId': 's', 'documents': [visit],
+        'readTime': '2026-06-08T10:00:00+00:00', 'resumeToken': 1,
+        'included': {'patients/p1': patientDoc, 'doctors/d1': doctorV1},
+      });
+      await pump();
+      expect(doctorOf(snaps.last), 'Dr Who');
+
+      unawaited(h.db.doc('doctors/d1').update({'name': 'Dr Local'}));
+      await pump();
+      expect(doctorOf(snaps.last), 'Dr Local', reason: 'no server round trip needed');
+      await sub.cancel();
+    });
+  });
 }
