@@ -5,7 +5,7 @@ import 'package:winche_database/src/protocol/connection.dart'
     show ConnectionConfig;
 
 void main() {
-  final uri = Uri.parse('ws://fake/documents/ws');
+  final uri = Uri.parse('ws://fake/documents/v1/ws');
 
   test('withStore injects a store directly', () async {
     final db = WincheDatabase(WincheApp('database-ctor'))

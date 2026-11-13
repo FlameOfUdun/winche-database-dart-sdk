@@ -21,7 +21,7 @@ class ReconnectHarness {
     db = WincheDatabase(WincheApp('listener-reconnect'))
       ..debugBindStore(
         ConnectionConfig(
-          uri: Uri.parse('ws://fake/documents/ws'),
+          uri: Uri.parse('ws://fake/documents/v1/ws'),
           channelFactory: (_) => _dial(),
           sleeper: (d) {
             sleeps.add(d);

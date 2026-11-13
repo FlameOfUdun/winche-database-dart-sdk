@@ -56,7 +56,7 @@ Future<(ProtocolConnection, _Harness)> _connect({
 }) async {
   final h = _Harness();
   final conn = ProtocolConnection(ConnectionConfig(
-    uri: Uri.parse('ws://fake/documents/ws'),
+    uri: Uri.parse('ws://fake/documents/v1/ws'),
     channelFactory: h.dial,
     sleeper: h.sleeper,
     pingInterval: const Duration(hours: 1), // disable auto-ping in tests

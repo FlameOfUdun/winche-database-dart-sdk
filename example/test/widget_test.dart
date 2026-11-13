@@ -12,7 +12,7 @@ void main() {
   // runAsync lets the SDK's internal timers settle so they don't linger as
   // fake-async pending timers when the test ends.
   testWidgets('app renders', (tester) async {
-    Winche.initializeApp(options: WincheOptions(databaseEndpoint: Uri.parse(kUri)));
+    Winche.initializeApp(options: WincheOptions(endpoints: {'database': Uri.parse(kUri)}));
     addTearDown(() => Winche.deinitializeApp());
 
     await tester.runAsync(() async {

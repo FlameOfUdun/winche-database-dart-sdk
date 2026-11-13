@@ -16,7 +16,7 @@ Future<(ProtocolConnection, FakeChannel)> _makeConnected() async {
   fake.startCapture();
 
   final conn = ProtocolConnection(ConnectionConfig(
-    uri: Uri.parse('ws://fake/documents/ws'),
+    uri: Uri.parse('ws://fake/documents/v1/ws'),
     channelFactory: (_) => fake,
     pingInterval: const Duration(hours: 1), // disable auto-ping in tests
   ));
@@ -58,7 +58,7 @@ void main() {
     fake.startCapture();
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) => fake,
       pingInterval: const Duration(hours: 1),
     ));
@@ -368,7 +368,7 @@ void main() {
     fake.startCapture();
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       tokenProvider: () => 'tok-123',
       channelFactory: (uri) {
         dialedUri = uri;
@@ -403,7 +403,7 @@ void main() {
     fake.startCapture();
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) => fake,
       pingInterval: const Duration(hours: 1),
     ));
@@ -427,7 +427,7 @@ void main() {
     final silentFake = FakeChannel();
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) => silentFake,
       pingInterval: const Duration(hours: 1),
     ));
@@ -462,7 +462,7 @@ void main() {
   // ---------------------------------------------------------------------------
   test('C2 — request() before connect() throws UnavailableException', () async {
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) => FakeChannel(),
       pingInterval: const Duration(hours: 1),
     ));
@@ -567,7 +567,7 @@ void main() {
     final channels = <FakeChannel>[];
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) {
         dialCount++;
         final c = FakeChannel()..startCapture();
@@ -607,7 +607,7 @@ void main() {
     final channels = <FakeChannel>[];
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) {
         dialCount++;
         final c = FakeChannel()..startCapture();

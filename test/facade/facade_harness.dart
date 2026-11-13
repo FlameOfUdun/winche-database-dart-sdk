@@ -38,7 +38,7 @@ class FacadeHarness {
     db = WincheDatabase(WincheApp('facade-harness'))
       ..debugBindStore(
         ConnectionConfig(
-          uri: Uri.parse('ws://fake/documents/ws'),
+          uri: Uri.parse('ws://fake/documents/v1/ws'),
           channelFactory: (_) {
             // This harness has exactly one fake channel, so it cannot honour a
             // real redial: a second dial attempt (now always possible, since

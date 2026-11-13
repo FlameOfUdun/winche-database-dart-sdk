@@ -27,7 +27,7 @@ void main() {
         // A refused-fast address: onSessionChanged requires an endpoint, but
         // nothing in this group ever awaits a successful connection.
         options: WincheOptions(
-          databaseEndpoint: Uri.parse('ws://localhost:1/ws'),
+          endpoints: {'database': Uri.parse('ws://localhost:1/ws')},
         ),
         hookTimeout: const Duration(seconds: 5),
       );

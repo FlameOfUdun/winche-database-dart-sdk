@@ -10,7 +10,7 @@ import '../protocol/fake_channel.dart';
 /// retry loop cannot spin hot during the test.
 WsTransport _failingTransport(void Function() onAttempt) => WsTransport(
       ConnectionConfig(
-        uri: Uri.parse('ws://fake/documents/ws'),
+        uri: Uri.parse('ws://fake/documents/v1/ws'),
         pingInterval: const Duration(hours: 1),
         sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 20)),
         channelFactory: (_) {
@@ -23,7 +23,7 @@ WsTransport _failingTransport(void Function() onAttempt) => WsTransport(
 void main() {
   test('connectionStates seeds a subscriber with the current state', () async {
     final transport = WsTransport(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       pingInterval: const Duration(hours: 1),
       channelFactory: (_) => FakeChannel()..startCapture(),
     ));

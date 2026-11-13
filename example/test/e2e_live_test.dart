@@ -93,7 +93,7 @@ void main() {
 
       Winche.initializeApp(
         options: WincheOptions(
-          databaseEndpoint: Uri.parse(kUri),
+          endpoints: {'database': Uri.parse(kUri)},
           directoryResolver: () async => dir,
         ),
       );

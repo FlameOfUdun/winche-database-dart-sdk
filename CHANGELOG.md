@@ -1,5 +1,14 @@
 # Changelog
 
+## 8.0.0
+
+On `winche_core` 1.0. Also contains 7.3.0, which was not released.
+
+**Breaking:** needs `winche_core` 1.0. The live endpoint is `/documents/v1/ws` under `WincheOptions.baseUrl` (`wss`
+for `https`), or `WincheOptions.endpoints['database']`; the server side moved to `/documents/v1` in Winche.Database.
+`WincheDatabase` is a plain `WincheService` that follows the session. The WebSocket transport, offline store and
+public API are unchanged.
+
 ## 7.3.0
 
 **New: signed-out access.** `WincheDatabaseConfig(allowSignedOut: true)` lets the

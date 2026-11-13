@@ -12,7 +12,7 @@ void main() {
     app = WincheApp(
       'signed-out-test',
       // Refused fast: nothing here waits for a connection.
-      options: WincheOptions(databaseEndpoint: Uri.parse('ws://localhost:1/ws')),
+      options: WincheOptions(endpoints: {'database': Uri.parse('ws://localhost:1/ws')}),
       hookTimeout: const Duration(seconds: 5),
     );
     auth = ScriptedAuthService(app);
@@ -66,7 +66,7 @@ void main() {
   });
 
   test('works with no auth service at all', () async {
-    final bare = WincheApp('no-auth', options: WincheOptions(databaseEndpoint: Uri.parse('ws://localhost:1/ws')));
+    final bare = WincheApp('no-auth', options: WincheOptions(endpoints: {'database': Uri.parse('ws://localhost:1/ws')}));
     final database = WincheDatabase(bare)..config = const WincheDatabaseConfig(allowSignedOut: true);
     final sub = database.doc('public/a').snapshots().listen((_) {}, onError: (_) {});
     await pumpEventQueue();

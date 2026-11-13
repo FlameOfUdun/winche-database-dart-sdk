@@ -15,7 +15,7 @@ import 'facade_harness.dart';
 WincheDatabase _offlineDb({required int maxCachedDocuments}) =>
     WincheDatabase(WincheApp('eviction'))..debugBindStore(
       ConnectionConfig(
-        uri: Uri.parse('ws://localhost:1/documents/ws'),
+        uri: Uri.parse('ws://localhost:1/documents/v1/ws'),
         // Reconnection is unconditional, so give the always-failing dial a
         // small real backoff instead of the default (which grows toward
         // maxBackoff and would slow this test down for no benefit).

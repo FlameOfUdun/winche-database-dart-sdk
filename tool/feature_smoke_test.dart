@@ -15,7 +15,7 @@
 //
 // Then, from the SDK package root:
 //   dart run tool/feature_smoke_test.dart
-//   dart run tool/feature_smoke_test.dart ws://localhost:5183/documents/ws
+//   dart run tool/feature_smoke_test.dart ws://localhost:5183/documents/v1/ws
 //
 // Exit code is non-zero if any check fails.
 
@@ -26,7 +26,7 @@ import 'dart:typed_data';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
-const _defaultWs = 'ws://localhost:5183/documents/ws';
+const _defaultWs = 'ws://localhost:5183/documents/v1/ws';
 const uid = 'user-123';
 
 late final WincheDatabase db;
@@ -38,7 +38,7 @@ late final SmokeAuth auth;
 /// access token, so a token in any other shape (such as
 /// `ScriptedAuthService`'s `token-<id>-<rotation>`) would authenticate as a
 /// different principal and every rule check below would deny.
-final class SmokeAuth extends WincheAuthService {
+final class SmokeAuth extends WincheService with WincheIdentitySource {
   SmokeAuth(super.app);
 
   WincheIdentity? _identity;
@@ -132,6 +132,9 @@ void _initSync() {
         // The drain stalled on auth. Nothing to record: no write reached the
         // server, so no outcome changed.
         break;
+      case SyncRetrying():
+        // A transient failure; the queue tries again. No outcome yet.
+        break;
     }
   });
 }
@@ -159,7 +162,7 @@ Future<void> main(List<String> args) async {
 
   // winche_database has no sign-in surface of its own, so SmokeAuth stands in
   // for a real auth backend and hands core a token equal to the uid.
-  Winche.initializeApp(options: WincheOptions(databaseEndpoint: Uri.parse(wsUrl)));
+  Winche.initializeApp(options: WincheOptions(endpoints: {'database': Uri.parse(wsUrl)}));
   db = WincheDatabase.instance..config = const WincheDatabaseConfig(inMemory: true);
   auth = SmokeAuth(Winche.app);
   auth.announce(WincheIdentity(uid));

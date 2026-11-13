@@ -16,7 +16,7 @@ class _AuthHarness {
     db = WincheDatabase(WincheApp('auth-switch'))
       ..debugBindStore(
         ConnectionConfig(
-          uri: Uri.parse('ws://fake/documents/ws'),
+          uri: Uri.parse('ws://fake/documents/v1/ws'),
           tokenProvider: tokenProvider,
           channelFactory: _dial,
           sleeper: (_) => Future<void>.value(),

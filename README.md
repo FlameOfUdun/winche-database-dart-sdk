@@ -57,7 +57,7 @@ flowchart TD
 
 `winche_database` is a consumer service on top of `winche_core`: it does not dial
 anything or open a store until an identity is signed in, and it does not carry a
-sign-in surface of its own — that is a `WincheAuthService`'s job (a real backend
+sign-in surface of its own — that is an identity source's job (`winche_auth`, or any `WincheIdentitySource`) (a real backend
 package, or `ScriptedAuthService` from `package:winche_core/testing.dart` for
 tests and samples). Set up core once at startup, then reach the database
 anywhere:
@@ -68,7 +68,7 @@ import 'package:winche_database/winche_database.dart';
 
 Winche.initializeApp(
   options: WincheOptions(
-    databaseEndpoint: Uri.parse('ws://localhost:5183/documents/ws'),
+    baseUrl: Uri.parse('http://localhost:9090'),   // live at ws://…/documents/v1/ws
     directoryResolver: () async => appDir,   // required on native (sembast root)
   ),
 );
@@ -151,7 +151,7 @@ worth knowing: the root answers "did any Winche SDK fail?", which is rarely the
 question you want here. Being signed out is not an error to retry or surface
 next to a `PERMISSION_DENIED`; it is fixed by signing in. Gate on sign-in state
 (your auth package's own identity/session surface, e.g. a
-`WincheAuthService.activeIdentity`) rather than catching this exception at call
+`WincheIdentitySource.activeIdentity`) rather than catching this exception at call
 sites.
 
 ---
@@ -528,7 +528,7 @@ IndexedDB):
 ```dart
 Winche.initializeApp(
   options: WincheOptions(
-    databaseEndpoint: uri,
+    endpoints: {'database': uri},
     directoryResolver: () async =>
         (await getApplicationDocumentsDirectory()).path,
   ),

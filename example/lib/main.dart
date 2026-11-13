@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 
-const kUri = 'ws://localhost:5183/documents/ws';
+const kUri = 'ws://localhost:5183/documents/v1/ws';
 
 /// The two identities this demo can sign in as.
 ///
@@ -23,14 +23,14 @@ String collectionFor(String uid) => 'userData/$uid/records';
 ///
 /// `winche_database` has no sign-in surface of its own — core defines none,
 /// deliberately, because how a backend authenticates is that backend's
-/// business. Some [WincheAuthService] must be registered with the app and
+/// business. Some identity source (a [WincheIdentitySource]) must be registered with the app and
 /// announce an identity before the database is usable.
 ///
 /// This one has no backend to authenticate against: the token it hands out is
 /// simply the uid, which the sample server accepts at face value. A real
 /// implementation would exchange credentials for a signed token and announce
 /// the result the same way.
-final class DemoAuthService extends WincheAuthService {
+final class DemoAuthService extends WincheService with WincheIdentitySource {
   DemoAuthService(super.app);
 
   WincheIdentity? _identity;
@@ -63,7 +63,7 @@ const bool kIsWeb = identical(0, 0.0);
 void main() {
   Winche.initializeApp(
     options: WincheOptions(
-      databaseEndpoint: Uri.parse(kUri),
+      endpoints: {'database': Uri.parse(kUri)},
       // The *parent* directory every service keeps its state under. Core hands
       // out this root and nothing else; `winche_database` composes
       // `<root>/winche/<storageKey>/` beneath it, so alice and bob get

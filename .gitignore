@@ -31,3 +31,4 @@ docs/specs/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+pubspec_overrides.yaml

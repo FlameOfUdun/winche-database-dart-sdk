@@ -102,7 +102,7 @@ String webDatabaseNameFor(WincheIdentity identity) =>
 ///
 /// NOTE: a persistent (sembast) database must be owned by a single isolate. Do
 /// not open the same on-disk database from multiple isolates concurrently.
-final class WincheDatabase extends WincheDatabaseService {
+final class WincheDatabase extends WincheService implements WincheSessionConsumer {
   /// Creates the database and registers it with [app].
   ///
   /// Prefer [instance]; construct directly only to attach to a non-default app.
@@ -114,6 +114,15 @@ final class WincheDatabase extends WincheDatabaseService {
   /// The database attached to [app], building it if needed.
   static WincheDatabase instanceFor(WincheApp app) =>
       WincheService.instanceFor(app, () => WincheDatabase(app));
+
+  /// The service's id in `WincheOptions.endpoints`.
+  static const serviceId = 'database';
+
+  /// Its WebSocket endpoint: `/documents/v1/ws` under `WincheOptions.baseUrl`
+  /// (`wss` for `https`), or `WincheOptions.endpoints['database']`. Throws a
+  /// [StateError] saying what to set when neither is configured.
+  Uri get _endpoint => (app.options ?? const WincheOptions())
+      .endpointFor(serviceId, path: '/documents/v1/ws', webSocket: true);
 
   _DatabaseSession? _session;
 
@@ -159,14 +168,10 @@ final class WincheDatabase extends WincheDatabaseService {
       return;
     }
 
-    final endpoint = app.options?.databaseEndpoint;
+    final Uri endpoint;
     final LocalStore store;
     try {
-      if (endpoint == null) {
-        throw StateError(
-          'WincheOptions.databaseEndpoint is required to use winche_database.',
-        );
-      }
+      endpoint = _endpoint;
       store = _storeFor(session);
     } catch (_) {
       // Whatever was bound — a previous user's session, or a signed-out one —
@@ -331,10 +336,7 @@ final class WincheDatabase extends WincheDatabaseService {
   _DatabaseSession? _currentSession() {
     final session = _session;
     if (session != null || !_config.allowSignedOut || isDisposed) return session;
-    final endpoint = app.options?.databaseEndpoint;
-    if (endpoint == null) {
-      throw StateError('WincheOptions.databaseEndpoint is required to use winche_database.');
-    }
+    final endpoint = _endpoint;
     // No previous session, so _bind completes synchronously and _session is set on return.
     unawaited(_bind(
       ConnectionConfig(
