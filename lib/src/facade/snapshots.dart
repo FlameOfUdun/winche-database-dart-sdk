@@ -152,15 +152,33 @@ final class DocumentSnapshot<T> {
   }
 
   /// Returns the document data as a native map regardless of `T`,
-  /// or null when [exists] is false. References are their documents' paths and
-  /// files and users their paths and uids, expanded or not: what `expand`
-  /// brought is read through [link] and [links].
+  /// or null when [exists] is false.
+  ///
+  /// A reference field is a [Link] (kind [LinkKind.document]): its `data()` is
+  /// the referenced document's fields when `expand` brought them. A `file:` or
+  /// `user:` field that was expanded is a [Link] too; not expanded, it's the
+  /// plain string it's stored as.
   Map<String, Object?>? nativeData() {
     if (!exists || rawData == null) return null;
-    return {
-      for (final entry in rawData!.entries) entry.key: fromValue(entry.value),
-    };
+    final paths = _expand ?? const <ExpandPath>[];
+    return {for (final e in rawData!.entries) e.key: _native(e.value, _below(paths, e.key))};
   }
+
+  /// This snapshot with its data read through [converter], without reading the
+  /// document again (its [reference] takes the converter too).
+  DocumentSnapshot<R> withConverter<R>(Converter<R> converter) => DocumentSnapshot<R>._(
+        reference: reference.withConverter(converter),
+        exists: exists,
+        rawData: rawData,
+        createTime: createTime,
+        updateTime: updateTime,
+        updateTimeRaw: updateTimeRaw,
+        version: version,
+        metadata: metadata,
+        included: _included,
+        expand: _expand,
+        resolved: _resolved,
+      );
 
   /// The field at [fieldPath] (dotted, e.g. `address.city`) as [R], or null when
   /// it's absent or not an [R].
@@ -173,107 +191,44 @@ final class DocumentSnapshot<T> {
     return value is R ? value : null;
   }
 
-  /// The link at [path]: a reference (`patient`), a file or user (`scan`,
-  /// `author`, when expanded as `file:` / `user:`), or one reached through
-  /// referenced documents (`patient.doctor`). Null when [path] doesn't lead to
-  /// one (or crosses a document that didn't come with the read). For lists, see
-  /// [links].
-  Link<Map<String, Object?>>? link(String path) {
-    final found = _links(path);
-    return found.length == 1 && !found.first.$2 ? found.first.$1 : null;
+  /// The paths that go on under field [key].
+  static List<ExpandPath> _below(List<ExpandPath> paths, String key) => [
+        for (final p in paths)
+          if (p.segments.isNotEmpty && p.segments.first == key) (segments: p.segments.sublist(1), kind: p.kind)
+      ];
+
+  /// [value] as native data, with references (and expanded files and users) as [Link]s; [paths] is what's left of
+  /// each expand path here.
+  Object? _native(Value value, List<ExpandPath> paths) => switch (value) {
+        ReferenceValue(:final path) => _documentLink(path, paths),
+        StringValue(:final value) => _kindedLink(value, paths) ?? value,
+        ArrayValue(:final elements) => [for (final e in elements) _native(e, paths)],
+        MapValue(:final fields) => {for (final e in fields.entries) e.key: _native(e.value, _below(paths, e.key))},
+        _ => fromValue(value),
+      };
+
+  Link<Map<String, Object?>> _documentLink(String path, List<ExpandPath> paths) {
+    final target = path.startsWith('/') ? path.substring(1) : path;
+    final wire = _included?[target];
+    final doc = wire == null
+        ? null
+        : DocumentSnapshot<Map<String, Object?>>._fromWire(reference._db.doc(target), wire,
+            metadata: metadata, included: _included, resolved: _resolved,
+            expand: [for (final p in paths) if (p.segments.isNotEmpty) p]);
+    return Link<Map<String, Object?>>._(LinkKind.document, target, doc, null, Converter._identity);
   }
 
-  /// The links at [path] when it holds a list (`team`), one per item that is a
-  /// link; a single link gives a list of one.
-  Links<Map<String, Object?>> links(String path) => Links._([for (final (l, _) in _links(path)) l]);
-
-  /// The links [path] reaches, each marked when it came from a list.
-  List<(Link<Map<String, Object?>>, bool)> _links(String path) {
-    final out = <(Link<Map<String, Object?>>, bool)>[];
-    final segments = path.split('.');
-    void step(Value value, int i, DocumentSnapshot<Map<String, Object?>> owner, List<String> inOwner, bool inList) {
-      if (i == segments.length) {
-        switch (value) {
-          case ReferenceValue(:final path):
-            out.add((owner._documentLink(path, inOwner), inList));
-          case StringValue(:final value):
-            if (owner._kindAt(inOwner) case final kind?) out.add((owner._kindedLink(kind, value), inList));
-          case ArrayValue(:final elements):
-            for (final e in elements) {
-              step(e, i, owner, inOwner, true);
-            }
-          default:
-            break;
-        }
-        return;
+  /// A [Link] when an expand path of kind `file` / `user` ends here; null otherwise (the string stays a string).
+  Link<Map<String, Object?>>? _kindedLink(String value, List<ExpandPath> paths) {
+    for (final p in paths) {
+      if (p.segments.isNotEmpty) continue;
+      final kind = switch (p.kind) { 'file' => LinkKind.file, 'user' => LinkKind.user, _ => null };
+      if (kind != null) {
+        return Link<Map<String, Object?>>._(kind, value, null, _resolved?['${p.kind}:$value'], Converter._identity);
       }
-      switch (value) {
-        case MapValue(:final fields):
-          final child = fields[segments[i]];
-          if (child != null) step(child, i + 1, owner, [...inOwner, segments[i]], inList);
-        case ArrayValue(:final elements):
-          for (final e in elements) {
-            step(e, i, owner, inOwner, true);
-          }
-        case ReferenceValue(:final path):
-          final doc = owner._documentLink(path, inOwner).doc;
-          if (doc?.rawData != null) step(MapValue(doc!.rawData!), i, doc, const [], inList);
-        default:
-          break;
-      }
-    }
-    if (rawData != null) step(MapValue(rawData!), 0, _untyped, const [], false);
-    return out;
-  }
-
-  /// This snapshot as a map-typed one (links are untyped until given a converter).
-  DocumentSnapshot<Map<String, Object?>> get _untyped => DocumentSnapshot<Map<String, Object?>>._(
-        reference: reference._db.doc(path), exists: exists, rawData: rawData, createTime: createTime,
-        updateTime: updateTime, updateTimeRaw: updateTimeRaw, version: version, metadata: metadata,
-        included: _included, expand: _expand, resolved: _resolved);
-
-  /// The kind of the expand path that ends at [inOwner] in this document (`file`, `user`), or null.
-  String? _kindAt(List<String> inOwner) {
-    for (final p in _expand ?? const <ExpandPath>[]) {
-      if (p.kind != null && p.segments.length == inOwner.length && _same(p.segments, inOwner)) return p.kind;
     }
     return null;
   }
-
-  static bool _same(List<String> a, List<String> b) {
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
-  /// The document link for a reference to [target] found at [inOwner]: its document, if it came with the read, with
-  /// the expand paths that go on through it.
-  Link<Map<String, Object?>> _documentLink(String target, List<String> inOwner) {
-    final path = target.startsWith('/') ? target.substring(1) : target;
-    final rest = [
-      for (final p in _expand ?? const <ExpandPath>[])
-        if (p.segments.length > inOwner.length && _same(p.segments.sublist(0, inOwner.length), inOwner))
-          (segments: p.segments.sublist(inOwner.length), kind: p.kind)
-    ];
-    return Link._(reference._db, 'document', path, null, Converter._identity, _included?[path],
-        _included, _resolved, rest, metadata);
-  }
-
-  Link<Map<String, Object?>> _kindedLink(String kind, String value) =>
-      Link._(reference._db, kind, value, _resolved?['$kind:$value'], Converter._identity, null, null, null, null, metadata);
-
-  /// The referenced documents that came with this read (`expand`), by path:
-  /// those the caller may read. Empty without `expand`.
-  Map<String, DocumentSnapshot<Map<String, Object?>>> get included => {
-        for (final e in (_included ?? const <String, WireDocument>{}).entries)
-          e.key: DocumentSnapshot<Map<String, Object?>>._fromWire(reference._db.doc(e.key), e.value,
-              metadata: metadata, included: _included, resolved: _resolved),
-      };
-
-  /// What kinded expand paths (`file:scan`, `user:author`) resolved to, by
-  /// `kind:value`. Empty without them.
-  Map<String, Map<String, Object?>> get resolved => Map.unmodifiable(_resolved ?? const <String, Map<String, Object?>>{});
 
   /// Creates a [DocumentSnapshot] from a [WireDocument].
   factory DocumentSnapshot._fromWire(
@@ -374,73 +329,65 @@ class QuerySnapshot<T> {
   final SnapshotMetadata metadata;
 }
 
-/// Something a reference reaches that implements a converter: a [DocumentReference], a
-/// [CollectionReference] or a [QueryReference]. [Link.like] borrows it.
-abstract interface class TypedReference<T> {
-  /// How this reference's documents become `T` and back.
-  Converter<T> get converter;
+/// What a [Link] points at.
+enum LinkKind {
+  /// Another document (a reference field).
+  document,
+
+  /// A file in Winche Storage (a `file:` expand path).
+  file,
+
+  /// A Winche Auth user (a `user:` expand path).
+  user,
 }
 
-/// A field the read's `expand` followed (see [DocumentSnapshot.link]). For a
-/// reference ([kind] `document`), [doc] is the referenced document when it came
-/// with the read and [docRef] reaches it either way; `winche_storage` and
-/// `winche_auth` add `file` / `fileRef` and `user` for their kinds.
+/// A field that points at something: a reference (always), or a file path or
+/// uid that `expand` followed (`file:scan`, `user:author`).
 ///
-/// Untyped (`Map`) until given a converter, exactly like a [DocumentReference]:
-/// [withConverter], or [like] to borrow one a reference already has.
-final class Link<T> extends WincheLink {
-  Link._(this._db, String kind, String target, Map<String, Object?>? json, this._converter, this._wire,
-      this._included, this._resolved, this._expand, this._metadata)
-      : super(_db.app, kind, target, json);
+/// [target] is always there: the document path, file path or uid. [data] is
+/// what `expand` brought (the referenced document's fields, the file's record,
+/// the user's public profile), and null when it didn't (not expanded, missing,
+/// hidden from this user, or not cached offline).
+///
+/// Read-only: writing a [Link] stores its [target] (a reference for documents,
+/// the string for files and users), never its data.
+final class Link<T> {
+  Link._(this.kind, this.target, this._doc, this._json, this._converter);
 
-  final WincheDatabase _db;
+  /// What it points at.
+  final LinkKind kind;
+
+  /// The document path, file path or uid.
+  final String target;
+
+  final DocumentSnapshot<Map<String, Object?>>? _doc;
+  final Map<String, Object?>? _json;
   final Converter<T> _converter;
-  final WireDocument? _wire;
-  final Map<String, WireDocument>? _included;
-  final Map<String, Map<String, Object?>>? _resolved;
-  final List<ExpandPath>? _expand;
-  final SnapshotMetadata _metadata;
 
-  /// A document link counts as resolved when its document came with the read.
-  @override
-  bool get isResolved => kind == 'document' ? _wire != null : json != null;
-
-  /// The referenced document, when it came with the read (null for other kinds,
-  /// and when it's missing, hidden from this user, or not cached offline). Its own
-  /// links go on along the rest of the expand path.
-  DocumentSnapshot<T>? get doc {
-    final wire = _wire;
-    if (kind != 'document' || wire == null) return null;
-    return DocumentSnapshot<T>._fromWire(docRef, wire,
-        metadata: _metadata, included: _included, resolved: _resolved, expand: _expand);
+  /// What `expand` brought, as `T` (a map until [withConverter]); null when it didn't.
+  T? data() {
+    final map = kind == LinkKind.document ? _doc?.nativeData() : _json;
+    return map == null ? null : _converter.fromMap(Map<String, Object?>.of(map));
   }
 
-  /// The referenced document's reference, typed like this link: `get()`, `snapshots()`, `update()`…
-  DocumentReference<T> get docRef {
-    if (kind != 'document') throw StateError('A $kind link has no document reference; its target is "$target".');
-    return DocumentReference<T>._(_db, target, _converter);
-  }
+  /// This link with its data read through [converter].
+  Link<R> withConverter<R>(Converter<R> converter) => Link<R>._(kind, target, _doc, _json, converter);
 
-  /// This link with [converter] for its document.
-  Link<R> withConverter<R>(Converter<R> converter) =>
-      Link<R>._(_db, kind, target, json, converter, _wire, _included, _resolved, _expand, _metadata);
-
-  /// This link with the converter [reference] has (e.g. `db.collection('patients').withConverter(…)`).
-  Link<R> like<R>(TypedReference<R> reference) => withConverter(reference.converter);
-}
-
-/// The links a list field holds (see [DocumentSnapshot.links]).
-final class Links<T> extends Iterable<Link<T>> {
-  Links._(this._links);
-
-  final List<Link<T>> _links;
+  /// [value] as a link of [kind]: a [Link] (from `data()`), or the plain string
+  /// a field holds when it wasn't expanded. Null when [value] is neither, so a
+  /// model's field can be a `Link` whether or not the read expanded it.
+  static Link<Map<String, Object?>>? from(Object? value, LinkKind kind) => switch (value) {
+        Link() => Link<Map<String, Object?>>._(value.kind, value.target, value._doc, value._json, Converter._identity),
+        String() => Link<Map<String, Object?>>._(kind, value, null, null, Converter._identity),
+        _ => null,
+      };
 
   @override
-  Iterator<Link<T>> get iterator => _links.iterator;
+  bool operator ==(Object other) => other is Link && other.kind == kind && other.target == target;
 
-  /// These links with [converter] for their documents.
-  Links<R> withConverter<R>(Converter<R> converter) => Links._([for (final l in _links) l.withConverter(converter)]);
+  @override
+  int get hashCode => Object.hash(kind, target);
 
-  /// These links with the converter [reference] has.
-  Links<R> like<R>(TypedReference<R> reference) => withConverter(reference.converter);
+  @override
+  String toString() => 'Link(${kind.name}:$target${_doc == null && _json == null ? '' : ', with data'})';
 }

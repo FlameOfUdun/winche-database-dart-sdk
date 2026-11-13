@@ -132,7 +132,7 @@ class _ExpandDemoState extends State<ExpandDemo> {
                   '${s.metadata.fromCache ? ' · from cache' : ''}${s.metadata.hasPendingWrites ? ' · unsynced writes' : ''}',
                   style: Theme.of(context).textTheme.labelMedium),
               const SizedBox(height: 8),
-              _DocCard(snapshot: s, depth: 0),
+              _DocCard(title: s.path, data: s.data()!, depth: 0),
             ]);
           },
         ),
@@ -141,16 +141,17 @@ class _ExpandDemoState extends State<ExpandDemo> {
   }
 }
 
-/// A document's fields; expanded references are nested cards, the rest pointer chips.
+/// A document's fields: links with data (expanded) are nested green cards, links without (not expanded, or hidden
+/// by the rules) grey chips with their target.
 class _DocCard extends StatelessWidget {
-  const _DocCard({required this.snapshot, required this.depth});
+  const _DocCard({required this.title, required this.data, required this.depth});
 
-  final DocumentSnapshot<Map<String, Object?>> snapshot;
+  final String title;
+  final Map<String, Object?> data;
   final int depth;
 
   @override
   Widget build(BuildContext context) {
-    final data = snapshot.data() ?? const {};
     final colors = Theme.of(context).colorScheme;
     return Card(
       color: depth == 0 ? null : Colors.green.withValues(alpha: 0.08),
@@ -164,45 +165,37 @@ class _DocCard extends StatelessWidget {
           Row(children: [
             Icon(depth == 0 ? Icons.description : Icons.link, size: 16, color: depth == 0 ? null : Colors.green.shade700),
             const SizedBox(width: 6),
-            Expanded(child: Text(snapshot.path, style: Theme.of(context).textTheme.labelLarge)),
+            Expanded(child: Text(title, style: Theme.of(context).textTheme.labelLarge)),
             if (depth > 0) Text('expanded', style: TextStyle(color: Colors.green.shade700, fontSize: 12)),
           ]),
           const Divider(),
-          for (final e in data.entries) _field(context, e.key, e.value),
+          for (final e in data.entries)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SizedBox(width: 90, child: Text(e.key, style: const TextStyle(fontWeight: FontWeight.w600))),
+                Expanded(child: _value(e.value)),
+              ]),
+            ),
         ]),
       ),
     );
   }
 
-  Widget _field(BuildContext context, String key, Object? value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          SizedBox(width: 90, child: Text(key, style: const TextStyle(fontWeight: FontWeight.w600))),
-          Expanded(child: _value(context, key, value)),
-        ]),
-      );
-
-  /// data() keeps the plain values; expanded references are read as links.
-  Widget _value(BuildContext context, String key, Object? value) {
-    if (value is List) {
-      final links = snapshot.links(key).toList();
-      if (links.isNotEmpty) return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [for (final l in links) _link(l)]);
-    }
-    if (snapshot.link(key) case final link?) return _link(link);
-    return Text('$value');
-  }
-
-  Widget _link(Link<Map<String, Object?>> link) => switch (link.doc) {
-        final doc? => _DocCard(snapshot: doc, depth: depth + 1),
-        // Not resolved (missing, or hidden by the rules): still a link to its target.
-        null => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Chip(
-              avatar: const Icon(Icons.link_off, size: 16),
-              label: Text(link.target),
-              visualDensity: VisualDensity.compact,
-              backgroundColor: Colors.grey.withValues(alpha: 0.12),
-            ),
-          ),
+  Widget _value(Object? value) => switch (value) {
+        Link link => switch (link.data()) {
+            final linked? => _DocCard(title: link.target, data: linked, depth: depth + 1),
+            null => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Chip(
+                  avatar: const Icon(Icons.link_off, size: 16),
+                  label: Text(link.target),
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: Colors.grey.withValues(alpha: 0.12),
+                ),
+              ),
+          },
+        List items => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [for (final v in items) _value(v)]),
+        _ => Text('$value'),
       };
 }

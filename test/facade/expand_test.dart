@@ -7,9 +7,22 @@ import 'facade_harness.dart';
 Map<String, Object?> ref(String path) => {'referenceValue': path};
 
 class Patient {
-  Patient(this.name);
+  Patient.fromMap(Map<String, Object?> m) : name = m['name'] as String, doctor = m['doctor'] as Link?;
   final String name;
-  static final converter = Converter<Patient>((m) => Patient(m['name'] as String), (p) => {'name': p.name});
+  final Link? doctor;
+  static final converter = Converter<Patient>(Patient.fromMap, (p) => {'name': p.name, 'doctor': p.doctor});
+}
+
+class Visit {
+  Visit.fromMap(Map<String, Object?> m)
+      : note = m['note'] as String,
+        patient = (m['patient'] as Link).withConverter(Patient.converter),
+        scan = Link.from(m['scan'], LinkKind.file);
+  final String note;
+  final Link<Patient> patient;
+  final Link? scan;
+  Map<String, Object?> toMap() => {'note': note, 'patient': patient, if (scan != null) 'scan': scan};
+  static final converter = Converter<Visit>(Visit.fromMap, (v) => v.toMap());
 }
 
 void main() {
@@ -31,59 +44,61 @@ void main() {
   };
 
   String? doctorOf(DocumentSnapshot<Map<String, Object?>> s) {
-    final doctor = s.link('patient.doctor');
-    if (doctor == null) return 'NO PATIENT';
-    return doctor.doc?.get<String>('name') ?? 'PATH';
+    final patient = (s.data()!['patient'] as Link).data();
+    if (patient == null) return 'NO PATIENT';
+    return (patient['doctor'] as Link).data()?['name'] as String? ?? 'PATH';
   }
 
-  test('get with expand: data keeps the paths, links bring the documents', () async {
+  test('get with expand: references are links, with data when expanded', () async {
     h.handler = (f) {
       if (f['type'] == 'doc.get') h.respond(f, {'document': visit, 'included': included});
     };
     final snap = await h.db.doc('visits/v1').expand(['patient.doctor', 'team']).get();
 
     expect(h.requests.firstWhere((f) => f['type'] == 'doc.get')['expand'], ['patient.doctor', 'team']);
-    expect(snap.data()!['patient'], 'patients/p1', reason: 'data() keeps the plain value');
-    final patient = snap.link('patient')!;
-    expect((patient.kind, patient.target, patient.isResolved), ('document', 'patients/p1', true));
-    expect(patient.doc!.get<String>('name'), 'Ann');
-    expect(patient.doc!.link('doctor')!.doc!.get<String>('name'), 'Dr Who');
-    expect(snap.link('patient.doctor')!.doc!.get<String>('name'), 'Dr Who', reason: 'a dotted path crosses documents');
-
-    final team = snap.links('team').toList();
+    final data = snap.data()!;
+    final patient = data['patient'] as Link;
+    expect((patient.kind, patient.target), (LinkKind.document, 'patients/p1'));
+    expect(patient.data()!['name'], 'Ann');
+    expect((patient.data()!['doctor'] as Link).data()!['name'], 'Dr Who');
+    final team = (data['team'] as List).cast<Link>();
     expect(team.map((l) => l.target), ['staff/a', 'staff/hidden']);
-    expect(team[0].doc!.get<String>('name'), 'A');
-    expect(team[1].isResolved, isFalse, reason: 'not readable (not included)');
-    expect(team[1].docRef.path, 'staff/hidden', reason: 'still reachable');
-    expect(snap.link('team'), isNull, reason: 'a list: use links()');
-    expect(snap.link('note'), isNull, reason: 'not a link');
+    expect(team[0].data()!['name'], 'A');
+    expect(team[1].data(), isNull, reason: 'not readable (not included): no data, still a target');
+    expect(data['note'], 'hi');
     expect(snap.get<String>('note'), 'hi');
   });
 
-  test('a link takes a converter like a reference, or borrows one', () async {
+  test('links and snapshots take converters; a model writes its links back as targets', () async {
     h.handler = (f) {
       if (f['type'] == 'doc.get') h.respond(f, {'document': visit, 'included': included});
+      if (f['type'] == 'write') h.respond(f, {'writeResults': [{'updateTime': '2026-06-08T10:00:00Z'}]});
     };
-    final snap = await h.db.doc('visits/v1').expand(['patient']).get();
-    final typed = snap.link('patient')!.withConverter(Patient.converter);
-    expect(typed.doc!.data()!.name, 'Ann');
-    expect(typed.docRef, isA<DocumentReference<Patient>>());
+    final snap = await h.db.doc('visits/v1').expand(['patient.doctor']).get();
+    final patient = (snap.data()!['patient'] as Link).withConverter(Patient.converter);
+    expect(patient.data()!.name, 'Ann');
+    expect(patient.data()!.doctor!.data()!['name'], 'Dr Who');
 
-    final patients = h.db.collection('patients').withConverter(Patient.converter);
-    expect(snap.link('patient')!.like(patients).doc!.data()!.name, 'Ann');
-    final staff = snap.links('team').like(patients).toList();
-    expect(staff, hasLength(2));
+    final typed = snap.withConverter(Visit.converter);
+    expect(typed.reference, isA<DocumentReference<Visit>>());
+    final model = typed.data()!;
+    expect((model.note, model.patient.data()!.name), ('hi', 'Ann'));
+
+    unawaited(h.db.doc('visits/copy').withConverter(Visit.converter).set(model));
+    await pump(20);   // the write goes out from the queue
+    final write = h.requests.lastWhere((f) => f['type'] == 'write');
+    final fields = ((write['writes'] as List).single as Map)['set']['fields'] as Map;
+    expect(fields['patient'], {'referenceValue': 'patients/p1'}, reason: 'the target, not the data');
   });
 
-  test('without expand, nothing extra is asked for and links are not resolved', () async {
+  test('without expand, references are links without data', () async {
     h.handler = (f) {
       if (f['type'] == 'doc.get') h.respond(f, {'document': visit});
     };
     final snap = await h.db.doc('visits/v1').get();
     expect(h.requests.firstWhere((f) => f['type'] == 'doc.get').containsKey('expand'), isFalse);
-    expect(snap.link('patient')!.isResolved, isFalse);
-    expect(snap.link('patient')!.docRef.path, 'patients/p1');
-    expect(snap.included, isEmpty);
+    final patient = snap.data()!['patient'] as Link;
+    expect((patient.target, patient.data()), ('patients/p1', null));
   });
 
   test('a query with expand expands each result, only along what was asked', () async {
@@ -92,9 +107,9 @@ void main() {
     };
     final snap = await h.db.collection('visits').where('note', isEqualTo: 'hi').expand(['patient']).get();
     expect(h.requests.firstWhere((f) => f['type'] == 'query')['expand'], ['patient']);
-    final doc = snap.docs.single;
-    expect(doc.link('patient')!.doc!.get<String>('name'), 'Ann');
-    expect(doc.link('patient.doctor')!.isResolved, isFalse);
+    final patient = (snap.docs.single.data()!['patient'] as Link).data()!;
+    expect(patient['name'], 'Ann');
+    expect((patient['doctor'] as Link).data(), isNull, reason: 'only "patient" was expanded');
   });
 
   test('a live document follows changes to its linked documents', () async {
@@ -143,7 +158,8 @@ void main() {
       'readTime': '2026-06-08T10:00:00+00:00', 'resumeToken': 1, 'included': included,
     });
     await pump();
-    expect(snaps.last.docs.single.link('patient')!.doc!.get<String>('name'), 'Ann');
+    String? patientName() => (snaps.last.docs.single.data()!['patient'] as Link).data()?['name'] as String?;
+    expect(patientName(), 'Ann');
 
     h.push({
       'type': 'listen.delta', 'subscriptionId': 'q', 'changes': [], 'count': 1,
@@ -151,7 +167,7 @@ void main() {
       'included': {'patients/p1': wireDoc('patients/p1', {'name': {'stringValue': 'Annie'}}, updateTime: '2026-06-08T10:01:00+00:00', version: 2)},
     });
     await pump();
-    expect(snaps.last.docs.single.link('patient')!.doc!.get<String>('name'), 'Annie');
+    expect(patientName(), 'Annie');
     expect(snaps.last.docChanges, isEmpty, reason: 'the results themselves did not change');
     await sub.cancel();
   });
@@ -166,7 +182,7 @@ void main() {
     expect(snap.exists, isTrue);
     expect(snap.get<String>('note'), 'just written');
     expect(snap.metadata.hasPendingWrites, isTrue);
-    expect(snap.link('patient')!.isResolved, isFalse);
+    expect((snap.data()!['patient'] as Link).data(), isNull);
   });
 
   group('on this device', () {
@@ -233,7 +249,7 @@ void main() {
     final patient2 = wireDoc('patients/p2', {'name': {'stringValue': 'Ann'}, 'author': {'stringValue': 'u1'}});
     final scanRecord = {'path': 'scans/a.png', 'mimeType': 'image/png', 'sizeBytes': 42};
 
-    test('kinded paths are links of their kind with what the server resolved', () async {
+    test('file: and user: fields are links when expanded, plain strings otherwise', () async {
       h.handler = (f) {
         if (f['type'] == 'doc.get') {
           h.respond(f, {
@@ -243,13 +259,17 @@ void main() {
         }
       };
       final snap = await h.db.doc('visits/v2').expand(['file:scan', 'file:other', 'user:patient.author']).get();
-      expect(snap.data()!['scan'], 'scans/a.png');
-      final scan = snap.link('scan')!;
-      expect((scan.kind, scan.target, scan.json!['sizeBytes']), ('file', 'scans/a.png', 42));
-      expect(snap.link('other')!.isResolved, isFalse);
-      final author = snap.link('patient.author')!;
-      expect((author.kind, author.target, author.json!['displayName']), ('user', 'u1', 'Dr Lee'));
-      expect(() => scan.docRef, throwsStateError);
+      final data = snap.data()!;
+      final scan = data['scan'] as Link;
+      expect((scan.kind, scan.target, scan.data()!['sizeBytes']), (LinkKind.file, 'scans/a.png', 42));
+      expect((data['other'] as Link).data(), isNull, reason: 'expanded but hidden or missing');
+      final author = (data['patient'] as Link).data()!['author'] as Link;
+      expect((author.kind, author.data()!['displayName']), (LinkKind.user, 'Dr Lee'));
+
+      final plain = await h.db.doc('visits/v2').expand(['patient']).get();
+      expect(plain.data()!['scan'], 'scans/a.png', reason: 'not expanded as file: a plain string');
+      expect(Link.from(plain.data()!['scan'], LinkKind.file)!.target, 'scans/a.png');
+      expect(Link.from(scan, LinkKind.file)!.data()!['sizeBytes'], 42);
     });
 
     test('live: resolved values follow the server', () async {
@@ -265,20 +285,21 @@ void main() {
         'resolved': {'file:scans/a.png': scanRecord},
       });
       await pump();
-      expect(snaps.last.link('scan')!.json!['sizeBytes'], 42);
+      int? size() => (snaps.last.data()!['scan'] as Link).data()?['sizeBytes'] as int?;
+      expect(size(), 42);
       h.push({
         'type': 'listen.delta', 'subscriptionId': 's', 'changes': [], 'count': 1,
         'readTime': '2026-06-08T10:01:00+00:00', 'resumeToken': 2,
         'resolved': {'file:scans/a.png': {...scanRecord, 'sizeBytes': 99}},
       });
       await pump();
-      expect(snaps.last.link('scan')!.json!['sizeBytes'], 99);
+      expect(size(), 99);
       h.push({
         'type': 'listen.delta', 'subscriptionId': 's', 'changes': [], 'count': 1,
         'readTime': '2026-06-08T10:02:00+00:00', 'resumeToken': 3, 'unresolved': ['file:scans/a.png'],
       });
       await pump();
-      expect(snaps.last.link('scan')!.isResolved, isFalse);
+      expect(size(), isNull);
       await sub.cancel();
     });
   });

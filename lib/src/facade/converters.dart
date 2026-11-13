@@ -68,6 +68,9 @@ Value toValue(Object? obj, {String keyPath = ''}) {
   // DocumentReference fields become referenceValue.
   if (obj is DocumentReference) return ReferenceValue(obj.path);
 
+  // A Link stores what it points at: a reference, or the file path / uid string. Never its data.
+  if (obj is Link) return obj.kind == LinkKind.document ? ReferenceValue(obj.target) : StringValue(obj.target);
+
   if (obj is List) {
     return ArrayValue([
       for (var i = 0; i < obj.length; i++)

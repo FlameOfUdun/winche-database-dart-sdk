@@ -29,7 +29,7 @@ List<ExpandPath>? _splitExpand(List<String>? expand) =>
     expand == null || expand.isEmpty ? null : [for (final p in expand) parseExpandPath(p)];
 
 /// A reference to a single document in the Winche Database.
-final class DocumentReference<T> implements TypedReference<T> {
+final class DocumentReference<T> {
   DocumentReference._(this._db, this.path, this._converter, [this._expand]);
 
   final WincheDatabase _db;
@@ -38,9 +38,6 @@ final class DocumentReference<T> implements TypedReference<T> {
 
   /// Reference fields to follow on reads (see [expand]).
   final List<String>? _expand;
-
-  @override
-  Converter<T> get converter => _converter;
 
   /// The document ID.
   String get id => docId(path);
@@ -53,15 +50,14 @@ final class DocumentReference<T> implements TypedReference<T> {
   /// This reference, with the reference fields at [paths] followed on [get] and
   /// [snapshots] (PROTOCOL §7.7): `['patient', 'patient.doctor', 'team']`.
   ///
-  /// The snapshot's data keeps the plain values; what came back is read with
-  /// [DocumentSnapshot.link]: `snap.link('patient')?.doc`,
-  /// `snap.link('patient.doctor')?.doc`, `snap.link('scan')?.file` (`file:scan`,
-  /// with `winche_storage`), `snap.link('author')?.user` (`user:author`, with
-  /// `winche_auth`), `snap.links('team')`. A link is typed with
-  /// [Link.withConverter] or [Link.like], like a reference. One whose target is
-  /// missing or hidden from the user isn't resolved (`doc` is null) but still
-  /// reaches it (`docRef`). Live: a change to a linked document, file or user
-  /// emits a new snapshot too. Offline, links are followed through the cache.
+  /// In `data()` a reference field is a [Link], whose `data()` is the referenced
+  /// document's fields when it was expanded (and its own references are links,
+  /// expanded along the rest of the path). `file:scan` and `user:author` make
+  /// those string fields links too, with the file's record or the user's public
+  /// profile. A link whose target is missing or hidden from the user has no
+  /// data, but its `target` is there. Live: a change to a linked document, file
+  /// or user emits a new snapshot. Offline, links are followed through the
+  /// cache.
   DocumentReference<T> expand(List<String> paths) => DocumentReference<T>._(_db, path, _converter, List.unmodifiable(paths));
 
   /// The parent [CollectionReference] (carries the same converter).
@@ -222,7 +218,7 @@ final class CollectionReference<T> extends QueryReference<T> {
 }
 
 /// An immutable, composable query over a collection.
-final class QueryReference<T> implements TypedReference<T> {
+final class QueryReference<T> {
   QueryReference._(this._db, this._collection, this._spec, this._converter, [this._expand]);
 
   final WincheDatabase _db;
@@ -232,9 +228,6 @@ final class QueryReference<T> implements TypedReference<T> {
 
   /// Reference fields to follow on reads (see [expand]).
   final List<String>? _expand;
-
-  @override
-  Converter<T> get converter => _converter;
 
   /// Returns a typed query that converts document data to and from [R].
   QueryReference<R> withConverter<R>(Converter<R> converter) {
