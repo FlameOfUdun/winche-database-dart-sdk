@@ -197,7 +197,7 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
         tokenProvider: () async {
           final token = await session.token();
           if (token == null) {
-            throw const UnauthenticatedException(
+            throw WincheDatabaseException.of(WincheErrorCode.unauthenticated, 
               'No auth token available for the current session.',
             );
           }
@@ -511,18 +511,19 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
       T result;
       try {
         result = await handler(tx);
-      } on AbortedException {
-        // AbortedException from the handler (e.g. tx.get/tx.query conflict) —
-        // retry with a fresh begin under the same maxAttempts/backoff policy (I6).
-        // No rollback needed: the server has already aborted the transaction.
-        if (attempt < maxAttempts - 1) {
-          await Future<void>.delayed(
-            linearBackoff(attempt, stepMs: 50, jitterMs: 50, rng: rng),
-          );
-          continue;
-        }
-        rethrow;
       } catch (e) {
+        if (_isAborted(e)) {
+          // An aborted from the handler (e.g. tx.get/tx.query conflict) —
+          // retry with a fresh begin under the same maxAttempts/backoff policy (I6).
+          // No rollback needed: the server has already aborted the transaction.
+          if (attempt < maxAttempts - 1) {
+            await Future<void>.delayed(
+              linearBackoff(attempt, stepMs: 50, jitterMs: 50, rng: rng),
+            );
+            continue;
+          }
+          rethrow;
+        }
         // Any other handler exception — roll back and rethrow.
         try {
           await tx._rollback();
@@ -541,7 +542,8 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
       try {
         await tx._commit();
         return result;
-      } on AbortedException {
+      } catch (e) {
+        if (!_isAborted(e)) rethrow;
         // Conflict — retry with backoff.
         if (attempt < maxAttempts - 1) {
           await Future<void>.delayed(
@@ -554,6 +556,8 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
     }
     throw StateError('Transaction failed after $maxAttempts attempts.');
   }
+
+  static bool _isAborted(Object e) => e is WincheDatabaseException && e.code == WincheErrorCode.aborted;
 
   /// Returns a new [WriteBatch] for atomic multi-document writes.
   WriteBatch batch() {

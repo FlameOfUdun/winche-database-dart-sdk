@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../support/wire_error.dart';
 
 import 'package:test/test.dart';
 import 'package:winche_core/winche_core.dart';
@@ -62,8 +63,7 @@ class _AuthHarness {
   ) => c.serverSend({
     'type': 'error',
     'id': frame['id'],
-    'status': status,
-    'message': message,
+    'error': wireError(status, message),
   });
 
   Future<void> close() async {

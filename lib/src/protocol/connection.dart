@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:winche_core/winche_core.dart';
 import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -49,7 +50,7 @@ final class ConnectionConfig {
   final Duration pingInterval;
 
   /// How long a request waits for its response before failing with
-  /// [UnavailableException] (so a read falls back to the cache instead of
+  /// a [WincheDatabaseException] with code `unavailable` (so a read falls back to the cache instead of
   /// hanging). [Duration.zero] disables it. Defaults to 60 seconds.
   final Duration requestTimeout;
 
@@ -176,7 +177,7 @@ class ProtocolConnection {
   /// Dials and completes the handshake.
   ///
   /// Rethrows the failure to its caller — `request()` depends on that to surface
-  /// [UnavailableException] — *and* hands recovery to the auto-reconnect loop, so
+  /// a [WincheDatabaseException] with code `unavailable` — *and* hands recovery to the auto-reconnect loop, so
   /// a connection that starts while the network is down is not dead forever. The
   /// two are not in conflict: the caller learns this attempt failed, while the
   /// loop keeps working in the background.
@@ -201,9 +202,9 @@ class ProtocolConnection {
     } catch (e) {
       // Channel factory threw (e.g. WebSocketChannelException on Windows when
       // the remote port is refused before the stream is even subscribed to).
-      // Normalise to UnavailableException so callers don't need to know about
+      // Normalise to `unavailable` so callers don't need to know about
       // transport-layer exception types.
-      throw UnavailableException('Failed to open WebSocket channel: $e');
+      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
     }
     _sub = _channel!.stream.listen(
       _onFrame,
@@ -218,7 +219,7 @@ class ProtocolConnection {
         welcomeTimeout,
         onTimeout: () {
           _welcomeCompleter = null;
-          throw const UnavailableException(
+          throw WincheDatabaseException.of(WincheErrorCode.unavailable, 
             'Handshake timed out: no welcome frame received',
           );
         },
@@ -234,12 +235,12 @@ class ProtocolConnection {
   /// Automatically assigns a unique `id` to the frame.
   /// The caller should not set an `id` in the frame — it will be overwritten.
   ///
-  /// Throws [UnavailableException] immediately if the connection is not ready
+  /// Throws a [WincheDatabaseException] with code `unavailable` immediately if the connection is not ready
   /// (including while reconnecting).
   Future<Map<String, Object?>> request(Map<String, Object?> frame) {
     if (_state != ConnectionState.ready) {
       return Future.error(
-        UnavailableException(
+        WincheDatabaseException.of(WincheErrorCode.unavailable, 
           'Cannot send request: connection is $_state',
         ),
       );
@@ -254,7 +255,7 @@ class ProtocolConnection {
     if (timeout > Duration.zero) {
       future = future.timeout(timeout, onTimeout: () {
         _pending.remove(id);
-        throw UnavailableException('No response within ${timeout.inSeconds}s');
+        throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'No response within ${timeout.inSeconds}s');
       });
     }
     return future;
@@ -374,8 +375,8 @@ class ProtocolConnection {
   /// preserved, so subscriptions resume in place exactly as after a network
   /// drop, and the state returns to `ready` on success.
   ///
-  /// Throws if the re-dial fails — [UnauthenticatedException] when the server
-  /// rejects the new token, [UnavailableException] when it is unreachable. In
+  /// Throws if the re-dial fails — `unauthenticated` when the server
+  /// rejects the new token, a [WincheDatabaseException] with code `unavailable` when it is unreachable. In
   /// that case the connection falls back to its normal post-drop behaviour:
   /// the auto-reconnect loop.
   Future<void> reconnect() async {
@@ -416,10 +417,10 @@ class ProtocolConnection {
   }) async {
     try {
       _channel = await _channelFactory(await _dialUri());
-    } on WincheProtocolException {
+    } on WincheDatabaseException {
       rethrow; // a tokenProvider that itself reports an auth failure
     } catch (e) {
-      throw UnavailableException('Failed to open WebSocket channel: $e');
+      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
     }
     _sub = _channel!.stream.listen(
       _onFrame,
@@ -431,7 +432,7 @@ class ProtocolConnection {
       welcomeTimeout,
       onTimeout: () {
         _welcomeCompleter = null;
-        throw const UnavailableException('Reconnect handshake timed out');
+        throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Reconnect handshake timed out');
       },
     );
   }
@@ -477,7 +478,7 @@ class ProtocolConnection {
       if (id != null) {
         final completer = _pending.remove(id);
         if (completer != null && !completer.isCompleted) {
-          completer.completeError(UnavailableException('Send failed: $e'));
+          completer.completeError(WincheDatabaseException.of(WincheErrorCode.unavailable, 'Send failed: $e'));
         }
       }
     }
@@ -511,7 +512,7 @@ class ProtocolConnection {
         final completer = _pending.remove(rawId);
         if (completer != null && !completer.isCompleted) {
           completer.completeError(
-            WincheProtocolException('INTERNAL', 'Malformed server frame for id $rawId'),
+            WincheDatabaseException.of(WincheErrorCode.internal, 'Malformed server frame for id $rawId'),
           );
         }
       }
@@ -527,16 +528,13 @@ class ProtocolConnection {
         final completer = _pending.remove(id);
         completer?.complete(result);
 
-      case ErrorFrame(:final id, :final status, :final message, :final details):
+      case ErrorFrame(:final id):
         if (id != null) {
           final completer = _pending.remove(id);
-          completer?.completeError(
-              WincheProtocolException.fromError(status, message, details));
+          completer?.completeError(frame.toException());
         } else {
           // Pre-welcome error (e.g. 4401 authentication failure).
-          _welcomeCompleter?.completeError(
-            WincheProtocolException.fromError(status, message, details),
-          );
+          _welcomeCompleter?.completeError(frame.toException());
           _welcomeCompleter = null;
         }
 
@@ -568,7 +566,7 @@ class ProtocolConnection {
     // Also fail the welcome completer if we're still connecting.
     if (_welcomeCompleter != null && !_welcomeCompleter!.isCompleted) {
       _welcomeCompleter!.completeError(
-        const UnavailableException('Connection closed during handshake'),
+        WincheDatabaseException.of(WincheErrorCode.unavailable, 'Connection closed during handshake'),
       );
       _welcomeCompleter = null;
     }
@@ -632,7 +630,7 @@ class ProtocolConnection {
       // Welcome completer fails → loop picks it up.
       if (_welcomeCompleter != null && !_welcomeCompleter!.isCompleted) {
         _welcomeCompleter!.completeError(
-          const UnavailableException('Channel closed during reconnect'),
+          WincheDatabaseException.of(WincheErrorCode.unavailable, 'Channel closed during reconnect'),
         );
         _welcomeCompleter = null;
       }
@@ -649,7 +647,7 @@ class ProtocolConnection {
   final Completer<void> _closed = Completer<void>();
 
   void _failAllPending(String reason) {
-    final ex = UnavailableException(reason);
+    final ex = WincheDatabaseException.of(WincheErrorCode.unavailable, reason);
     for (final c in _pending.values) {
       if (!c.isCompleted) c.completeError(ex);
     }

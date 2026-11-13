@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:winche_core/winche_core.dart';
+
 import '../core/value_relay.dart';
 import '../protocol/connection.dart';
 import '../protocol/exceptions.dart';

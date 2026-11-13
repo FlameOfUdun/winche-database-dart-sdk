@@ -1,4 +1,5 @@
 import '../protocol/exceptions.dart';
+import 'package:winche_core/winche_core.dart';
 import '../protocol/messages.dart';
 import '../protocol/query_spec.dart';
 import '../core/timestamps.dart';
@@ -77,12 +78,11 @@ class CachingReadCoordinator implements ReadCoordinator {
   }
 
   /// Statuses treated as transient — on [Source.serverOrCache] these fall back
-  /// to the local cache rather than throwing. `UnavailableException` carries
-  /// status `UNAVAILABLE`, so transport failures stay covered.
-  static const _transientStatuses = {
-    'UNAVAILABLE',
-    'DEADLINE_EXCEEDED',
-    'INTERNAL'
+  /// to the local cache rather than throwing. a transport failure is `unavailable`, so transport failures stay covered.
+  static const _transientCodes = {
+    WincheErrorCode.unavailable,
+    WincheErrorCode.deadlineExceeded,
+    WincheErrorCode.internal,
   };
 
   /// Applies the read-[source] policy around [serverFetch], returning whether
@@ -98,8 +98,8 @@ class CachingReadCoordinator implements ReadCoordinator {
     try {
       await serverFetch();
       return false;
-    } on WincheProtocolException catch (e) {
-      if (_transientStatuses.contains(e.status)) return true;
+    } on WincheDatabaseException catch (e) {
+      if (_transientCodes.contains(e.code)) return true;
       rethrow;
     }
   }

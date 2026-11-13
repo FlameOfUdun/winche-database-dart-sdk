@@ -9,6 +9,12 @@ for `https`), or `WincheOptions.endpoints['database']`; the server side moved to
 `WincheDatabase` is a plain `WincheService` that follows the session. The WebSocket transport, offline store and
 public API are unchanged.
 
+**Errors:** `WincheDatabaseException` replaces `WincheProtocolException`: a `WincheException` with the shared `code`
+(`WincheErrorCode`), `reason` (`invalid-query`) and `details`, read from the new error frame
+`{type: "error", id, error: {code, message, reason?, details?}}`. `WincheProtocolException`, the per-kind subclasses
+(still thrown for this release), `status`, `fromError` and `InvalidQueryException.code` (now `validationCode`) are
+deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseException`s.
+
 - **`settings`**, like every Winche package: `WincheDatabase.instance.settings = WincheDatabaseSettings(…)`. `config` and `WincheDatabaseConfig` remain, deprecated.
 
 ## 7.3.0

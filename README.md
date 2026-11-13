@@ -143,13 +143,13 @@ imports for `Winche.initializeApp`. This package does not re-export it: "nobody
 is signed in" is a stack-wide condition core owns, not one `winche_database`
 defines.
 
-It is deliberately **not** a `WincheProtocolException` — it never crosses the
+It is deliberately **not** a `WincheDatabaseException` — it never crosses the
 wire, so it does not belong in the backend-error hierarchy, and `on
-WincheProtocolException` will not catch it. It *is* a `WincheException`, core's
+WincheDatabaseException` will not catch it. It *is* a `WincheException`, core's
 root for the whole stack, so `on WincheException` will. That is the distinction
 worth knowing: the root answers "did any Winche SDK fail?", which is rarely the
 question you want here. Being signed out is not an error to retry or surface
-next to a `PERMISSION_DENIED`; it is fixed by signing in. Gate on sign-in state
+next to a `permissionDenied`; it is fixed by signing in. Gate on sign-in state
 (your auth package's own identity/session surface, e.g. a
 `WincheIdentitySource.activeIdentity`) rather than catching this exception at call
 sites.
@@ -214,7 +214,7 @@ Every read goes through the cache. `GetOptions.source` picks the policy:
 
 - `Source.serverOrCache` (default) — read the server, refreshing the cache; on a
   **transient** failure (unavailable / timeout / internal) fall back to cache.
-  Actionable errors (`PERMISSION_DENIED`, `UNAUTHENTICATED`, `INVALID_*`) propagate.
+  Actionable errors (`permissionDenied`, `unauthenticated`, `invalidArgument`) propagate.
 - `Source.server` — server only; throws when unreachable.
 - `Source.cache` — local only; never contacts the server.
 
@@ -345,7 +345,7 @@ flowchart TD
   W["local write (latency compensation)"] --> E
 ```
 
-A permanently-failing subscription (`PERMISSION_DENIED` / `UNAUTHENTICATED` /
+A permanently-failing subscription (`permissionDenied` / `unauthenticated` /
 invalid query) surfaces the error on the stream and stops retrying; transient
 drops reconnect silently. Server-side deletions are reconciled into the local
 cache (a deleted document never reappears), and with durable persistence a
@@ -386,7 +386,7 @@ db.syncEvents.listen((e) {
     // ConflictPolicy.manual (default): resolve explicitly
     e.discard(); // or e.retry() / e.overwrite()
   } else if (e is WriteFailed) {
-    // permanent: PERMISSION_DENIED, INVALID_ARGUMENT, INVALID_QUERY, or a
+    // permanent: permissionDenied, invalidArgument (an invalid query too), or a
     // conflict auto-resolution couldn't settle; dropped from the queue.
     // e.writes carries the dropped entries in full — this is the only place
     // they still exist, so capture them here if the work matters.
@@ -499,22 +499,32 @@ old `snapshots()` subscription and starts a new one.
 
 ---
 
-Operations throw a `WincheProtocolException` subclass on failure:
-`PermissionDeniedException`, `UnauthenticatedException`, `NotFoundException`,
-`AlreadyExistsException`, `FailedPreconditionException`, `AbortedException`,
-`InvalidQueryException` (with `jsonPath` / `code`), `InvalidArgumentException`,
-`DeadlineExceededException`, `InternalException`, `UnavailableException`.
+Operations throw a `WincheDatabaseException` on failure: a `WincheException` with a `code` from the list every Winche
+package shares (`WincheErrorCode`), a `message`, the server's `reason` when it sent a more precise one
+(`WincheDatabaseException.invalidQuery` for a query that doesn't parse or validate) and its `details` (`jsonPath`, a
+plan-validation `code`, an `errorId`).
 
-`WincheProtocolException` extends `WincheException`, core's root for the whole
-stack. Catch the former for "the database backend rejected this" and the latter
-for "any Winche SDK failed" — they are different questions, and the narrower
-one is usually the one you want.
+```dart
+try {
+  await db.doc('users/u1').get();
+} on WincheDatabaseException catch (e) {
+  switch (e.code) {
+    case WincheErrorCode.permissionDenied: showNotAllowed();
+    case WincheErrorCode.notFound: showMissing();
+    default: if (e.isTransient) retryLater();   // unavailable, deadlineExceeded, aborted, resourceExhausted
+  }
+}
+```
+
+Catch `WincheDatabaseException` for "the database rejected this", `WincheException` for "any Winche SDK failed". The
+7.x names (`WincheProtocolException`, `PermissionDeniedException`, `NotFoundException`, …, and `status`) still work,
+deprecated, until the next major version.
 
 Calling anything before sign-in, or after a sign-out, throws
 `WincheUnboundException` instead — see
 [What throws while nobody is signed in](#what-throws-while-nobody-is-signed-in).
-It is a `WincheException` but not a `WincheProtocolException`, so
-`on WincheProtocolException` will not catch it.
+It is a `WincheException` but not a `WincheDatabaseException`, so
+`on WincheDatabaseException` will not catch it.
 
 ---
 

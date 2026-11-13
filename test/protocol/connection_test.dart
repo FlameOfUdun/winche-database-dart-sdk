@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../support/wire_error.dart';
 
 import 'package:test/test.dart';
 import 'package:winche_database/src/protocol/connection.dart';
@@ -68,8 +69,7 @@ void main() {
 
     fake.serverSend({
       'type': 'error',
-      'status': 'UNAUTHENTICATED',
-      'message': 'Token rejected.',
+      'error': wireError('UNAUTHENTICATED', 'Token rejected.'),
     });
 
     await expectLater(connectFuture, throwsA(isA<UnauthenticatedException>()));
@@ -145,9 +145,7 @@ void main() {
     fake.serverSend({
       'type': 'error',
       'id': id,
-      'status': 'NOT_FOUND',
-      'message': "Document does not exist.",
-      'details': null,
+      'error': wireError('NOT_FOUND', "Document does not exist.", null),
     });
 
     await expectLater(
@@ -322,8 +320,7 @@ void main() {
         fake.serverSend({
           'type': 'error',
           'id': '0', // matching the request id
-          'status': 'NOT_FOUND',
-          // 'message' missing — malformed
+          // 'error' missing — malformed
         });
       },
       (e, st) => fail('Zone error must not occur: $e'),

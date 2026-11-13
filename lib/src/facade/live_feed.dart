@@ -56,11 +56,10 @@ abstract class _LiveFeed {
   /// Error statuses that stop all future (re)subscription and surface once on
   /// the stream. Both variants share the set: a `doc.listen` never produces
   /// `INVALID_QUERY`, so including it is harmless.
-  static const _permanentStatuses = {
-    'INVALID_QUERY',
-    'INVALID_ARGUMENT',
-    'PERMISSION_DENIED',
-    'UNAUTHENTICATED',
+  static const _permanentCodes = {
+    WincheErrorCode.invalidArgument,   // an invalid query among them
+    WincheErrorCode.permissionDenied,
+    WincheErrorCode.unauthenticated,
   };
 
   // ── Hooks ──────────────────────────────────────────────────────────────────
@@ -168,8 +167,8 @@ abstract class _LiveFeed {
       _frames = _session.transport
           .listenEvents(subId)
           .listen(_onFrame, onError: (_) => _goDown(), onDone: _goDown);
-    } on WincheProtocolException catch (e) {
-      if (_permanentStatuses.contains(e.status)) {
+    } on WincheDatabaseException catch (e) {
+      if (_permanentCodes.contains(e.code)) {
         _permanent = true;
         if (!_out.isClosed) _out.addError(e);
       } else {

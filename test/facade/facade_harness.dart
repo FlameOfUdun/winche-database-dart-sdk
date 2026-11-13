@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../support/wire_error.dart';
 
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
@@ -128,9 +129,7 @@ class FacadeHarness {
     channel.serverSend({
       'type': 'error',
       'id': frame['id'],
-      'status': status,
-      'message': message,
-      if (details != null) 'details': details,
+      'error': wireError(status, message, details),
     });
   }
 

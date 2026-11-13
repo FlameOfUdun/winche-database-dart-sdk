@@ -161,9 +161,7 @@ sealed class ServerFrame {
         ),
       'error' => ErrorFrame(
           id: opt<String>('id'),
-          status: req<String>('status'),
-          message: req<String>('message'),
-          details: opt<Map<String, Object?>>('details'),
+          error: req<Map<String, Object?>>('error'),
         ),
       'listen.snapshot' => ListenSnapshotFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -213,23 +211,17 @@ final class ResponseFrame extends ServerFrame {
   final Map<String, Object?> result;
 }
 
-/// `{"type": "error", "id"?: "...", "status": "...", "message": "...", "details"?: {...}}`
+/// `{"type": "error", "id"?: "...", "error": {"code", "message", "reason"?, "details"?}}` — the shared Winche error.
 final class ErrorFrame extends ServerFrame {
-  const ErrorFrame({
-    required this.id,
-    required this.status,
-    required this.message,
-    this.details,
-  });
+  const ErrorFrame({required this.id, required this.error});
 
   final String? id;
-  final String status;
-  final String message;
-  final Map<String, Object?>? details;
 
-  /// Creates a [WincheProtocolException] from this frame.
-  WincheProtocolException toException() =>
-      WincheProtocolException.fromError(status, message, details);
+  /// The shared error object.
+  final Map<String, Object?> error;
+
+  /// Creates a [WincheDatabaseException] from this frame.
+  WincheDatabaseException toException() => WincheDatabaseException.fromWire(error);
 }
 
 /// `{"type": "listen.snapshot", ...}` — full state snapshot (PROTOCOL §7.6).
