@@ -178,23 +178,31 @@ class _DocCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           SizedBox(width: 90, child: Text(key, style: const TextStyle(fontWeight: FontWeight.w600))),
-          Expanded(child: _value(context, value)),
+          Expanded(child: _value(context, key, value)),
         ]),
       );
 
-  Widget _value(BuildContext context, Object? value) => switch (value) {
-        DocumentSnapshot<Map<String, Object?>> s => _DocCard(snapshot: s, depth: depth + 1),
-        List l => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [for (final v in l) _value(context, v)]),
-        // A reference that wasn't expanded reads back as its document's path.
-        String p when p.startsWith('userData/') && p.split('/').length.isEven => Padding(
+  /// data() keeps the plain values; expanded references are read as links.
+  Widget _value(BuildContext context, String key, Object? value) {
+    if (value is List) {
+      final links = snapshot.links(key).toList();
+      if (links.isNotEmpty) return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [for (final l in links) _link(l)]);
+    }
+    if (snapshot.link(key) case final link?) return _link(link);
+    return Text('$value');
+  }
+
+  Widget _link(Link<Map<String, Object?>> link) => switch (link.doc) {
+        final doc? => _DocCard(snapshot: doc, depth: depth + 1),
+        // Not resolved (missing, or hidden by the rules): still a link to its target.
+        null => Padding(
             padding: const EdgeInsets.symmetric(vertical: 2),
             child: Chip(
               avatar: const Icon(Icons.link_off, size: 16),
-              label: Text(p),
+              label: Text(link.target),
               visualDensity: VisualDensity.compact,
               backgroundColor: Colors.grey.withValues(alpha: 0.12),
             ),
           ),
-        _ => Text('$value'),
       };
 }

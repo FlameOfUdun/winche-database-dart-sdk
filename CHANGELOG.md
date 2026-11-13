@@ -16,14 +16,12 @@ public API are unchanged.
 deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseException`s.
 
 - **`settings`**, like every Winche package: `WincheDatabase.instance.settings = WincheDatabaseSettings(…)`. `config` and `WincheDatabaseConfig` remain, deprecated.
-- **Expanding references:** `doc(…).expand(['patient', 'patient.doctor'])` and `query.expand([…])` follow reference
-  fields on `get()` and `snapshots()` (server `expand`, PROTOCOL §7.7). In `data()` an expanded reference is its
-  document's `DocumentSnapshot` instead of its path; `snapshot.included` lists them. Live, a change to a referenced
-  document emits a new snapshot (no `docChanges` when the results didn't change). Needs Winche.Database with `expand`.
-  Offline, references are followed through the cache (expanded reads and listeners cache what they include), with the
-  user's unsynced writes on referenced documents too; an expanded listener never resumes, so it catches up in full.
-  Kinded paths (`file:scan`, `user:author`) expand a file path or uid into the file's record or the user's public
-  profile (a `Map` in `data()`, `snapshot.resolved`).
+- **Expanding references:** `doc(…).expand([...])` and `query.expand([...])` follow reference fields (and `file:` /
+  `user:` paths) on `get()` and `snapshots()` (server `expand`, PROTOCOL §7.7). `data()` keeps the plain values; the
+  followed things are links: `snapshot.link('patient')?.doc`, `links('team')`, typed with `withConverter` or `like`
+  like a reference; `winche_storage` adds `file`/`fileRef`, `winche_auth` adds `user`. Live, they follow changes;
+  offline, document links are followed through the cache with the user's unsynced writes. `snapshot.get<T>(field)`
+  reads plain fields typed. Needs Winche.Database with `expand`.
 
 ## 7.3.0
 

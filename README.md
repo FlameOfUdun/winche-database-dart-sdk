@@ -319,31 +319,35 @@ final recent = await db.collectionGroup('sessionHistory')
 ### Expanding references
 
 A reference field (a `DocumentReference` written into a document) reads back as its document's path. Ask for it to be
-followed and its document comes with the read:
+followed, and the document comes with the read, as a **link**:
 
 ```dart
-final visit = await db.doc('visits/v1').expand(['patient', 'patient.doctor', 'team']).get();
-final patient = visit.data()!['patient'] as DocumentSnapshot<Map<String, Object?>>;
-final doctor = patient.data()!['doctor'] as DocumentSnapshot<Map<String, Object?>>;   // followed inside the patient
+final visit = await db.doc('visits/v1')
+    .expand(['patient.doctor', 'team', 'file:scan', 'user:patient.author'])
+    .get();
 
-db.collection('visits').where('ward', isEqualTo: 'icu').expand(['patient']).snapshots().listen((s) { … });
+visit.get<String>('reason');                                  // plain fields, typed
+visit.link('patient')?.doc?.get<String>('name');              // the referenced document
+visit.link('patient.doctor')?.doc?.get<String>('specialty');  // a dotted path crosses documents
+for (final member in visit.links('team')) { member.doc?.get<String>('name'); }
+visit.link('scan')?.file?.data?.sizeBytes;                    // with winche_storage: FileSnapshot
+visit.link('patient.author')?.user?.displayName;              // with winche_auth: UserSnapshot
+
+// Typed like a reference, when you want a model:
+visit.link('patient')?.withConverter(Patient.converter).doc?.data();   // Patient?
+visit.link('patient')?.like(db.collection('patients').withConverter(Patient.converter)).doc?.data();
 ```
 
+- `data()` keeps the plain values (paths, uids). A link is always there for an expanded field: `isResolved` is false
+  when its target is missing, hidden by the rules, or not cached offline, and `docRef` / `fileRef` / `uid` still reach
+  it.
 - Paths walk maps, lists (each item) and references: `patient.doctor` is the `doctor` of the `patient`'s document.
-  10 paths, 4 references deep, 100 documents per read at most.
-- A reference whose document is missing, or that the rules don't let the user read, stays a path (`String`).
-- **Files and users:** a field holding a file's path or a uid (a plain string) can be expanded with a kind:
-  `expand(['file:scan', 'user:patient.author'])`. In `data()` it's then a `Map`: the file's record (type, size,
-  metadata; get a download link from `winche_storage`) or the user's public profile (`uid`, `displayName`,
-  `photoUrl`). One the user may not see stays the string; `snapshot.resolved` lists them. Live, they follow changes;
-  offline, a listener keeps the last ones the server sent (one-shot reads offline give the plain strings).
-- Live: when a referenced document changes, the listener emits a new snapshot (a query's `docChanges` are empty when
-  only referenced documents changed).
-- **Offline:** expanded reads follow references through the cache, so what was read before (by an expanded read or a
-  listener, which both cache the referenced documents) still shows, `fromCache`; anything never cached stays a path.
-  The user's own unsynced writes show in referenced documents too, at once: a doctor renamed offline, or one created
-  offline and pointed to. Back online, an expanded listener starts with a full snapshot (never a resume), so changes
-  made elsewhere while away arrive.
+  `file:` and `user:` say what a string field holds. 10 paths, 4 references deep, 100 documents per read at most.
+- Live: when a linked document, file or user changes, the listener emits a new snapshot (a query's `docChanges` are
+  empty when only linked things changed).
+- **Offline:** links to documents are followed through the cache (what expanded reads and listeners brought before
+  shows, `fromCache`), with the user's own unsynced writes on them too. Back online, an expanded listener starts with a
+  full snapshot (never a resume). Files and users: a listener keeps the last the server sent.
 
 ## Real-time listeners
 
