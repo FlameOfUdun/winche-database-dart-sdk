@@ -245,8 +245,9 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
   final Converter<T> _converter;
   final List<String>? _expand;
 
-  /// With `expand`: the referenced documents last sent by the server.
+  /// With `expand`: the referenced documents and resolved values last sent by the server.
   Map<String, WireDocument>? _included;
+  Map<String, Map<String, Object?>>? _resolved;
 
   /// Last server-authoritative set (null until the first server snapshot).
   List<WireDocument>? _serverDocs;
@@ -265,6 +266,7 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
       _included = update.included;
       await _session.cache.putConfirmedAll(update.included!.values.toList()); // warm for offline reads
     }
+    if (update.resolved != null) _resolved = update.resolved;   // kept while offline: the last known
     final paths = [for (final d in update.docs) d.path];
     await _session.targets.setMembers(_spec, paths);
     _session.activeTargets.pin(this, paths);
@@ -308,7 +310,7 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
       for (final wire in shaped)
         DocumentSnapshot<T>._fromWire(
             _db.doc(wire.path).withConverter(_converter), wire,
-            metadata: metadata, included: included, expand: expand),
+            metadata: metadata, included: included, expand: expand, resolved: _resolved),
     ];
 
     final changes = _first
@@ -416,8 +418,9 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
   final DocumentReference<T> _ref;
   final List<String>? _expand;
 
-  /// With `expand`: the referenced documents last sent by the server.
+  /// With `expand`: the referenced documents and resolved values last sent by the server.
   Map<String, WireDocument>? _included;
+  Map<String, Map<String, Object?>>? _resolved;
 
   String get _path => _ref.path;
 
@@ -433,6 +436,7 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
       _included = update.included;
       await _session.cache.putConfirmedAll(update.included!.values.toList());
     }
+    if (update.resolved != null) _resolved = update.resolved;
     _serverDoc = update.docs.isEmpty ? null : update.docs.first;
     if (_serverDoc != null) {
       _session.activeTargets.pin(this, [_path]);
@@ -473,6 +477,6 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
     controller.add(eff.document == null
         ? DocumentSnapshot<T>._missing(_ref, metadata: metadata)
         : DocumentSnapshot<T>._fromWire(_ref, eff.document!,
-            metadata: metadata, included: included, expand: expand));
+            metadata: metadata, included: included, expand: expand, resolved: _resolved));
   }
 }

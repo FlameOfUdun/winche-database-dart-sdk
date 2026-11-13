@@ -332,6 +332,11 @@ db.collection('visits').where('ward', isEqualTo: 'icu').expand(['patient']).snap
 - Paths walk maps, lists (each item) and references: `patient.doctor` is the `doctor` of the `patient`'s document.
   10 paths, 4 references deep, 100 documents per read at most.
 - A reference whose document is missing, or that the rules don't let the user read, stays a path (`String`).
+- **Files and users:** a field holding a file's path or a uid (a plain string) can be expanded with a kind:
+  `expand(['file:scan', 'user:patient.author'])`. In `data()` it's then a `Map`: the file's record (type, size,
+  metadata; get a download link from `winche_storage`) or the user's public profile (`uid`, `displayName`,
+  `photoUrl`). One the user may not see stays the string; `snapshot.resolved` lists them. Live, they follow changes;
+  offline, a listener keeps the last ones the server sent (one-shot reads offline give the plain strings).
 - Live: when a referenced document changes, the listener emits a new snapshot (a query's `docChanges` are empty when
   only referenced documents changed).
 - **Offline:** expanded reads follow references through the cache, so what was read before (by an expanded read or a

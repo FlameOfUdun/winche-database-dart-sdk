@@ -13,10 +13,14 @@ class _FeedUpdate {
     this.currentOnly = false,
     this.tombstoneOnly = false,
     this.included,
+    this.resolved,
   });
 
   /// With `expand`: the referenced documents the server has sent, by path.
   final Map<String, WireDocument>? included;
+
+  /// With kinded `expand` paths: what the server resolved them to, by `kind:value`.
+  final Map<String, Map<String, Object?>>? resolved;
   final List<WireDocument> docs;
   final Set<String> deletedPaths;
   final bool currentOnly;
@@ -46,19 +50,26 @@ abstract class _LiveFeed {
   /// Reference fields the server follows (PROTOCOL §7.7), and what it has sent.
   final List<String>? _expand;
   Map<String, WireDocument>? _included;
+  Map<String, Map<String, Object?>>? _resolved;
 
   /// Applies a frame's `included` / `excluded`: a snapshot replaces the set, a delta updates it.
   void _applyIncluded(ServerFrame frame) {
     if (_expand == null) return;
     switch (frame) {
-      case ListenSnapshotFrame(:final included):
+      case ListenSnapshotFrame(:final included, :final resolved):
         _included = {...?included};
-      case ListenDeltaFrame(:final included, :final excluded):
+        _resolved = {...?resolved};
+      case ListenDeltaFrame(:final included, :final excluded, :final resolved, :final unresolved):
         final next = {...?_included, ...?included};
         for (final p in excluded) {
           next.remove(p);
         }
         _included = next;
+        final values = {...?_resolved, ...?resolved};
+        for (final k in unresolved) {
+          values.remove(k);
+        }
+        _resolved = values;
       default:
         break;
     }
@@ -116,7 +127,8 @@ abstract class _LiveFeed {
     if (!_out.isClosed) {
       _out.add(_FeedUpdate(
           docs: List.unmodifiable(docs), deletedPaths: deletedPaths,
-          included: _included == null ? null : Map.unmodifiable(_included!)));
+          included: _included == null ? null : Map.unmodifiable(_included!),
+          resolved: _resolved == null ? null : Map.unmodifiable(_resolved!)));
     }
   }
 

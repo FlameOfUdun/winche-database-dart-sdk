@@ -98,15 +98,20 @@ final class DocumentSnapshot<T> {
     required this.version,
     this.metadata = const SnapshotMetadata(),
     Map<String, WireDocument>? included,
-    List<List<String>>? expand,
+    List<ExpandPath>? expand,
+    Map<String, Map<String, Object?>>? resolved,
   })  : _included = included,
-        _expand = expand;
+        _expand = expand,
+        _resolved = resolved;
+
+  /// What kinded expand paths (`file:`, `user:`) stand for, by `kind:value`.
+  final Map<String, Map<String, Object?>>? _resolved;
 
   /// Referenced documents that came with this read (`expand`), by path.
   final Map<String, WireDocument>? _included;
 
   /// The reference paths still to follow from this document, split into fields.
-  final List<List<String>>? _expand;
+  final List<ExpandPath>? _expand;
 
   /// The [DocumentReference] for this document.
   final DocumentReference<T> reference;
@@ -155,52 +160,69 @@ final class DocumentSnapshot<T> {
   Map<String, Object?>? nativeData() {
     if (!exists || rawData == null) return null;
     final expand = _expand;
-    if (expand == null || expand.isEmpty || _included == null) {
+    if (expand == null || expand.isEmpty || (_included == null && _resolved == null)) {
       return {
         for (final entry in rawData!.entries) entry.key: fromValue(entry.value),
       };
     }
     return {
       for (final entry in rawData!.entries)
-        entry.key: _native(entry.value, [
-          for (final p in expand)
-            if (p.isNotEmpty && p.first == entry.key) p.sublist(1)
-        ]),
+        entry.key: _native(entry.value, _below(expand, entry.key)),
     };
   }
 
+  /// The paths that go on under field [key].
+  static List<ExpandPath> _below(List<ExpandPath> paths, String key) => [
+        for (final p in paths)
+          if (p.segments.isNotEmpty && p.segments.first == key) (segments: p.segments.sublist(1), kind: p.kind)
+      ];
+
   /// [value] as native data, expanding the references [paths] (what's left of
   /// each expand path at this point) reach.
-  Object? _native(Value value, List<List<String>> paths) {
+  Object? _native(Value value, List<ExpandPath> paths) {
     if (paths.isEmpty) return fromValue(value);
     return switch (value) {
+      StringValue(:final value) => _resolvedFor(value, paths) ?? value,
       ReferenceValue(:final path) => _expanded(path, paths) ?? path,
       ArrayValue(:final elements) => [for (final e in elements) _native(e, paths)],
       MapValue(:final fields) => {
-          for (final entry in fields.entries)
-            entry.key: _native(entry.value, [
-              for (final p in paths)
-                if (p.isNotEmpty && p.first == entry.key) p.sublist(1)
-            ]),
+          for (final entry in fields.entries) entry.key: _native(entry.value, _below(paths, entry.key)),
         },
       _ => fromValue(value),
     };
   }
 
-  DocumentSnapshot<Map<String, Object?>>? _expanded(String path, List<List<String>> rest) {
+  /// What a kinded path ending at [value] resolved to (a file's record, a user's profile), or null.
+  Map<String, Object?>? _resolvedFor(String value, List<ExpandPath> paths) {
+    for (final p in paths) {
+      if (p.kind == null || p.segments.isNotEmpty) continue;
+      final found = _resolved?['${p.kind}:$value'];
+      if (found != null) return Map<String, Object?>.of(found);
+    }
+    return null;
+  }
+
+  DocumentSnapshot<Map<String, Object?>>? _expanded(String path, List<ExpandPath> paths) {
+    // Only plain paths end at a reference; kinded ones go on through it.
+    final rest = [for (final p in paths) if (p.kind == null || p.segments.isNotEmpty) p];
+    if (rest.isEmpty) return null;
     final target = path.startsWith('/') ? path.substring(1) : path;
     final wire = _included?[target];
     if (wire == null) return null;   // missing or not readable: stays a pointer
     return DocumentSnapshot<Map<String, Object?>>._fromWire(reference._db.doc(target), wire,
-        metadata: metadata, included: _included, expand: [for (final p in rest) if (p.isNotEmpty) p]);
+        metadata: metadata, included: _included, resolved: _resolved, expand: [for (final p in rest) if (p.segments.isNotEmpty) p]);
   }
+
+  /// What kinded expand paths (`file:scan`, `user:author`) resolved to, by `kind:value`: a file's record, a user's
+  /// public profile. Empty without them.
+  Map<String, Map<String, Object?>> get resolved => Map.unmodifiable(_resolved ?? const <String, Map<String, Object?>>{});
 
   /// The referenced documents that came with this read (`expand`), by path:
   /// those the caller may read. Empty without `expand`.
   Map<String, DocumentSnapshot<Map<String, Object?>>> get included => {
         for (final e in (_included ?? const <String, WireDocument>{}).entries)
           e.key: DocumentSnapshot<Map<String, Object?>>._fromWire(reference._db.doc(e.key), e.value,
-              metadata: metadata, included: _included),
+              metadata: metadata, included: _included, resolved: _resolved),
       };
 
   /// Creates a [DocumentSnapshot] from a [WireDocument].
@@ -209,7 +231,8 @@ final class DocumentSnapshot<T> {
     WireDocument wire, {
     SnapshotMetadata metadata = const SnapshotMetadata(),
     Map<String, WireDocument>? included,
-    List<List<String>>? expand,
+    List<ExpandPath>? expand,
+    Map<String, Map<String, Object?>>? resolved,
   }) {
     return DocumentSnapshot._(
       reference: reference,
@@ -222,6 +245,7 @@ final class DocumentSnapshot<T> {
       metadata: metadata,
       included: included,
       expand: expand,
+      resolved: resolved,
     );
   }
 

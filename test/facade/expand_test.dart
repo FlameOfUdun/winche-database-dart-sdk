@@ -223,4 +223,67 @@ void main() {
       await sub.cancel();
     });
   });
+
+  group('files and users', () {
+    final visitWithLinks = wireDoc('visits/v2', {
+      'scan': {'stringValue': 'scans/a.png'},
+      'other': {'stringValue': 'scans/hidden.png'},
+      'patient': ref('patients/p2'),
+    });
+    final patient2 = wireDoc('patients/p2', {'name': {'stringValue': 'Ann'}, 'author': {'stringValue': 'u1'}});
+    final scanRecord = {'path': 'scans/a.png', 'mimeType': 'image/png', 'sizeBytes': 42};
+
+    test('kinded paths come back as what the server resolved them to', () async {
+      h.handler = (f) {
+        if (f['type'] == 'doc.get') {
+          h.respond(f, {
+            'document': visitWithLinks,
+            'included': {'patients/p2': patient2},
+            'resolved': {'file:scans/a.png': scanRecord, 'user:u1': {'uid': 'u1', 'displayName': 'Dr Lee'}},
+          });
+        }
+      };
+      final snap = await h.db.doc('visits/v2').expand(['file:scan', 'file:other', 'user:patient.author']).get();
+      expect(h.requests.firstWhere((f) => f['type'] == 'doc.get')['expand'], ['file:scan', 'file:other', 'user:patient.author']);
+      final data = snap.data()!;
+      expect((data['scan'] as Map)['sizeBytes'], 42);
+      expect(data['other'], 'scans/hidden.png', reason: 'not resolved (hidden or missing): the plain value');
+      final patient = data['patient'] as DocumentSnapshot<Map<String, Object?>>;
+      expect((patient.data()!['author'] as Map)['displayName'], 'Dr Lee');
+      expect(patient.data()!['name'], 'Ann');
+      expect(snap.resolved.keys, containsAll(['file:scans/a.png', 'user:u1']));
+    });
+
+    test('live: resolved values follow the server', () async {
+      h.handler = (f) {
+        if (f['type'] == 'doc.listen') h.respond(f, {'subscriptionId': 's'});
+      };
+      final snaps = <DocumentSnapshot<Map<String, Object?>>>[];
+      final sub = h.db.doc('visits/v2').expand(['file:scan']).snapshots().listen(snaps.add);
+      await pump();
+      h.push({
+        'type': 'listen.snapshot', 'subscriptionId': 's', 'documents': [visitWithLinks],
+        'readTime': '2026-06-08T10:00:00+00:00', 'resumeToken': 1, 'included': <String, Object?>{},
+        'resolved': {'file:scans/a.png': scanRecord},
+      });
+      await pump();
+      expect((snaps.last.data()!['scan'] as Map)['sizeBytes'], 42);
+
+      h.push({
+        'type': 'listen.delta', 'subscriptionId': 's', 'changes': [], 'count': 1,
+        'readTime': '2026-06-08T10:01:00+00:00', 'resumeToken': 2,
+        'resolved': {'file:scans/a.png': {...scanRecord, 'sizeBytes': 99}},
+      });
+      await pump();
+      expect((snaps.last.data()!['scan'] as Map)['sizeBytes'], 99);
+
+      h.push({
+        'type': 'listen.delta', 'subscriptionId': 's', 'changes': [], 'count': 1,
+        'readTime': '2026-06-08T10:02:00+00:00', 'resumeToken': 3, 'unresolved': ['file:scans/a.png'],
+      });
+      await pump();
+      expect(snaps.last.data()!['scan'], 'scans/a.png');
+      await sub.cancel();
+    });
+  });
 }

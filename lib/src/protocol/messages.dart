@@ -174,6 +174,7 @@ sealed class ServerFrame {
               ? (json['resumeToken'] as num).toInt()
               : null,
           included: includedOf(json['included']),
+          resolved: resolvedOf(json['resolved']),
         ),
       'listen.delta' => ListenDeltaFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -188,6 +189,8 @@ sealed class ServerFrame {
               : null,
           included: includedOf(json['included']),
           excluded: [for (final p in (json['excluded'] as List<Object?>? ?? const [])) p as String],
+          resolved: resolvedOf(json['resolved']),
+          unresolved: [for (final p in (json['unresolved'] as List<Object?>? ?? const [])) p as String],
         ),
       'listen.current' => ListenCurrentFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -227,6 +230,12 @@ final class ErrorFrame extends ServerFrame {
   WincheDatabaseException toException() => WincheDatabaseException.fromWire(error);
 }
 
+/// The `resolved` of a response or frame (PROTOCOL §7.7): what kinded expand paths (`file:`, `user:`) stand for,
+/// by `kind:value`, or null when absent.
+Map<String, Map<String, Object?>>? resolvedOf(Object? json) => json is Map<String, Object?>
+    ? {for (final e in json.entries) if (e.value is Map<String, Object?>) e.key: e.value as Map<String, Object?>}
+    : null;
+
 /// The `included` of a response or frame (PROTOCOL §7.7): referenced documents by path, or null when absent.
 Map<String, WireDocument>? includedOf(Object? json) => json is Map<String, Object?>
     ? {for (final e in json.entries) e.key: WireDocument.fromJson(e.value as Map<String, Object?>)}
@@ -240,10 +249,14 @@ final class ListenSnapshotFrame extends ServerFrame {
     required this.readTime,
     this.resumeToken,
     this.included,
+    this.resolved,
   });
 
   /// With `expand`: every referenced document the caller may read, by path (replaces the previous set).
   final Map<String, WireDocument>? included;
+
+  /// With kinded `expand` paths: every resolved value, by `kind:value` (replaces the previous set).
+  final Map<String, Map<String, Object?>>? resolved;
 
   final String subscriptionId;
   final List<WireDocument> documents;
@@ -263,7 +276,15 @@ final class ListenDeltaFrame extends ServerFrame {
     this.resumeToken,
     this.included,
     this.excluded = const [],
+    this.resolved,
+    this.unresolved = const [],
   });
+
+  /// Resolved values new or changed since the last frame, by `kind:value`.
+  final Map<String, Map<String, Object?>>? resolved;
+
+  /// Resolved values no longer there.
+  final List<String> unresolved;
 
   /// With `expand`: referenced documents new or changed since the last frame.
   final Map<String, WireDocument>? included;

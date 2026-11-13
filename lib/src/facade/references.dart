@@ -15,7 +15,7 @@ String _generateId() {
 /// them: the server's ([fromServer], when given: a path it left out is missing
 /// or not readable) or the cache's, each with the user's own unsynced writes on
 /// top (so a document they just made, or changed offline, shows).
-Future<Map<String, WireDocument>> _includedLocally(WincheDatabase db, Iterable<WireDocument?> roots, List<List<String>> paths,
+Future<Map<String, WireDocument>> _includedLocally(WincheDatabase db, Iterable<WireDocument?> roots, List<ExpandPath> paths,
     {Map<String, WireDocument>? fromServer}) {
   final session = db._require();
   return walkReferences(roots, paths, (path) async {
@@ -25,8 +25,8 @@ Future<Map<String, WireDocument>> _includedLocally(WincheDatabase db, Iterable<W
 }
 
 /// Splits expand paths into their fields.
-List<List<String>>? _splitExpand(List<String>? expand) =>
-    expand == null || expand.isEmpty ? null : [for (final p in expand) p.split('.')];
+List<ExpandPath>? _splitExpand(List<String>? expand) =>
+    expand == null || expand.isEmpty ? null : [for (final p in expand) parseExpandPath(p)];
 
 /// A reference to a single document in the Winche Database.
 final class DocumentReference<T> {
@@ -100,7 +100,8 @@ final class DocumentReference<T> {
         if (eff.document == null) return DocumentSnapshot<T>._missing(this, metadata: metadata);
         final paths = _splitExpand(expand)!;
         return DocumentSnapshot<T>._fromWire(this, eff.document!, metadata: metadata,
-            included: await _includedLocally(_db, [eff.document], paths, fromServer: fromServer), expand: paths);
+            included: await _includedLocally(_db, [eff.document], paths, fromServer: fromServer), expand: paths,
+            resolved: resolvedOf(result['resolved']));
       } on WincheDatabaseException catch (e) {
         if (e.code != WincheErrorCode.unavailable || options.source == Source.server) rethrow;
       }
@@ -489,10 +490,11 @@ final class QueryReference<T> {
     final ordered = const LocalQueryEngine().runQuery(_spec, view.docs);
     final metadata = SnapshotMetadata(hasPendingWrites: view.anyPending);
     final included = await _includedLocally(_db, ordered, paths, fromServer: fromServer);
+    final resolved = resolvedOf(result['resolved']);
     final docs = [
       for (final wire in ordered)
         DocumentSnapshot<T>._fromWire(_db.doc(wire.path).withConverter(_converter), wire,
-            metadata: metadata, included: included, expand: paths),
+            metadata: metadata, included: included, expand: paths, resolved: resolved),
     ];
     return QuerySnapshot<T>(
       docs: List.unmodifiable(docs),

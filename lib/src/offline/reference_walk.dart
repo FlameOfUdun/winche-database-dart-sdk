@@ -1,6 +1,18 @@
 import '../core/values.dart';
 import '../protocol/messages.dart';
 
+/// One expand path: its fields, and the kind its end is resolved by on the server
+/// (`file:scan` → kind `file`), or null for plain references.
+typedef ExpandPath = ({List<String> segments, String? kind});
+
+/// Parses `patient.doctor`, `file:scan`, `user:patient.author`.
+ExpandPath parseExpandPath(String path) {
+  final colon = path.indexOf(':');
+  return colon > 0
+      ? (segments: path.substring(colon + 1).split('.'), kind: path.substring(0, colon))
+      : (segments: path.split('.'), kind: null);
+}
+
 /// The most references followed one after another, and the most documents one
 /// read includes: the server's limits (PROTOCOL §7.7).
 const int maxExpandDepth = 4;
@@ -14,47 +26,48 @@ const int maxExpandDocuments = 100;
 /// asked for once. Returns the documents found, by path.
 Future<Map<String, WireDocument>> walkReferences(
   Iterable<WireDocument?> roots,
-  List<List<String>> paths,
+  List<ExpandPath> paths,
   Future<WireDocument?> Function(String path) resolve,
 ) async {
   final found = <String, WireDocument>{};
   final asked = <String>{};
-  var level = <(String, List<String>)>[];
+  var level = <(String, List<String>, String?)>[];
   for (final root in roots) {
     if (root == null) continue;
     for (final p in paths) {
-      _walk(MapValue(root.fields), p, 0, level);
+      _walk(MapValue(root.fields), p.segments, 0, p.kind, level);
     }
   }
   for (var depth = 1; level.isNotEmpty && depth <= maxExpandDepth; depth++) {
-    for (final (path, _) in level) {
+    for (final (path, _, _) in level) {
       if (asked.contains(path) || asked.length >= maxExpandDocuments) continue;
       asked.add(path);
       final doc = await resolve(path);
       if (doc != null) found[path] = doc;
     }
-    final next = <(String, List<String>)>[];
-    for (final (path, rest) in level) {
+    final next = <(String, List<String>, String?)>[];
+    for (final (path, rest, kind) in level) {
       final doc = found[path];
-      if (rest.isNotEmpty && doc != null) _walk(MapValue(doc.fields), rest, 0, next);
+      if (rest.isNotEmpty && doc != null) _walk(MapValue(doc.fields), rest, 0, kind, next);
     }
     level = next;
   }
   return found;
 }
 
-void _walk(Value value, List<String> segments, int i, List<(String, List<String>)> out) {
+void _walk(Value value, List<String> segments, int i, String? kind, List<(String, List<String>, String?)> out) {
   switch (value) {
-    case ReferenceValue(:final path):
+    // A kinded path's end is a value the server resolves (a file path, a uid), not a reference to follow here.
+    case ReferenceValue(:final path) when kind == null || i < segments.length:
       final target = path.startsWith('/') ? path.substring(1) : path;
-      if (target.split('/').length.isEven) out.add((target, segments.sublist(i)));
+      if (target.split('/').length.isEven) out.add((target, segments.sublist(i), kind));
     case ArrayValue(:final elements):
       for (final e in elements) {
-        _walk(e, segments, i, out);
+        _walk(e, segments, i, kind, out);
       }
     case MapValue(:final fields) when i < segments.length:
       final child = fields[segments[i]];
-      if (child != null) _walk(child, segments, i + 1, out);
+      if (child != null) _walk(child, segments, i + 1, kind, out);
     default:
       break;
   }

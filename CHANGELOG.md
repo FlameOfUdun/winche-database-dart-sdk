@@ -22,6 +22,8 @@ deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseExcep
   document emits a new snapshot (no `docChanges` when the results didn't change). Needs Winche.Database with `expand`.
   Offline, references are followed through the cache (expanded reads and listeners cache what they include), with the
   user's unsynced writes on referenced documents too; an expanded listener never resumes, so it catches up in full.
+  Kinded paths (`file:scan`, `user:author`) expand a file path or uid into the file's record or the user's public
+  profile (a `Map` in `data()`, `snapshot.resolved`).
 
 ## 7.3.0
 
