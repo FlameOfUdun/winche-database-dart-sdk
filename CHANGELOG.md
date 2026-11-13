@@ -9,6 +9,8 @@ for `https`), or `WincheOptions.endpoints['database']`; the server side moved to
 `WincheDatabase` is a plain `WincheService` that follows the session. The WebSocket transport, offline store and
 public API are unchanged.
 
+- **`settings`**, like every Winche package: `WincheDatabase.instance.settings = WincheDatabaseSettings(…)`. `config` and `WincheDatabaseConfig` remain, deprecated.
+
 ## 7.3.0
 
 **New: signed-out access.** `WincheDatabaseConfig(allowSignedOut: true)` lets the

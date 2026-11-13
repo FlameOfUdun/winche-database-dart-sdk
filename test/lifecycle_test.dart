@@ -35,7 +35,7 @@ void main() {
       // inMemory so no filesystem is touched; set immediately after
       // construction, while the facade is still unbound (`_started` is false).
       db = WincheDatabase(app)
-        ..config = const WincheDatabaseConfig(inMemory: true);
+        ..settings = const WincheDatabaseSettings(inMemory: true);
     });
 
     tearDown(() async {
@@ -161,7 +161,7 @@ void main() {
       await app.settled;
 
       // Bound but unused: `_started` is still false, so this must succeed.
-      db.config = const WincheDatabaseConfig(inMemory: true);
+      db.settings = const WincheDatabaseSettings(inMemory: true);
 
       // Any operational public member funnels through `_require()`, marking
       // `_started`. `connectionState` deliberately does not — it is a status
@@ -169,7 +169,7 @@ void main() {
       db.hasPendingWrites;
 
       expect(
-        () => db.config = const WincheDatabaseConfig(inMemory: true),
+        () => db.settings = const WincheDatabaseSettings(inMemory: true),
         throwsA(isA<StateError>()),
       );
     });

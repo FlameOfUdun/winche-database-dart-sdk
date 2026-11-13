@@ -159,7 +159,7 @@ class _HomePageState extends State<HomePage> {
   // before the database is ever used — `config` throws once a session has
   // started.
   late final _db = WincheDatabase.instance
-    ..config = WincheDatabaseConfig();
+    ..settings = WincheDatabaseSettings();
 
   StreamSubscription<SyncEvent>? _syncSub;
   StreamSubscription<ConnectionState>? _connSub;

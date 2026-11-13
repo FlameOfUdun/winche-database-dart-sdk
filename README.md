@@ -83,10 +83,10 @@ sign-in, sign-out and user switch. This package never sees a token directly —
 it reads one from the current session on every (re)dial.
 
 Tuning that has nothing to do with *which* backend or *which* identity lives on
-`WincheDatabaseConfig`, set right after obtaining the instance:
+`WincheDatabaseSettings`, set right after obtaining the instance:
 
 ```dart
-db.config = const WincheDatabaseConfig(
+db.settings = const WincheDatabaseSettings(
   pingInterval: const Duration(seconds: 30),   // default
   autoReconnect: true,                          // default
   maxBackoff: const Duration(seconds: 30),      // default
@@ -98,7 +98,7 @@ db.config = const WincheDatabaseConfig(
 );
 ```
 
-Every field defaults, so `const WincheDatabaseConfig()` (equivalently, never
+Every field defaults, so `const WincheDatabaseSettings()` (equivalently, never
 touching `config`) is a valid, fully-working configuration. Setting `config`
 **throws a `StateError` once the database has been used** — once any member has
 opened its store or dialled its socket. This works on the line right after
@@ -409,7 +409,7 @@ final pending = await db.hasPendingWrites;
 await db.clearPersistence();       // wipe local cache + queue
 ```
 
-Conflict handling is governed by `WincheDatabaseConfig.conflictPolicy`:
+Conflict handling is governed by `WincheDatabaseSettings.conflictPolicy`:
 `manual` (default — pause and surface a `WriteConflict` for explicit
 resolution), `clientWins` (replay the local write, last-write-wins), or
 `serverWins` (drop the local write, keep the server's). Under the automatic
@@ -555,10 +555,10 @@ package — are flattened into one IndexedDB database name,
 `winche_<storageKey>_database`.
 
 For a non-durable in-memory store (state lost on exit), set `inMemory: true` on
-`WincheDatabaseConfig` (then `directoryResolver` is never consulted):
+`WincheDatabaseSettings` (then `directoryResolver` is never consulted):
 
 ```dart
-db.config = const WincheDatabaseConfig(inMemory: true);
+db.settings = const WincheDatabaseSettings(inMemory: true);
 ```
 
 ---
@@ -570,7 +570,7 @@ By default the database is bound to whoever is signed in, and throws
 caller — public data, or an app with no sign-in at all:
 
 ```dart
-db.config = const WincheDatabaseConfig(allowSignedOut: true);
+db.settings = const WincheDatabaseSettings(allowSignedOut: true);
 ```
 
 Requests then go without a token, and the server's rules decide what a
@@ -619,7 +619,7 @@ its next read (deleted documents stay tombstoned). A configured cap is also
 enforced against already-persisted documents on startup.
 
 ```dart
-db.config = const WincheDatabaseConfig(
+db.settings = const WincheDatabaseSettings(
   cacheSizeBytes: 50 * 1024 * 1024,   // ~50 MiB cap (or maxCachedDocuments: 10000)
 );
 ```

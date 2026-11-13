@@ -8,7 +8,7 @@ import 'package:winche_database/winche_database.dart';
 Future<void> main(List<String> args) async {
   final target = args.isEmpty ? 'localhost:9090' : args.first;
   final app = WincheApp('signed-out-live', options: WincheOptions(endpoints: {'database': Uri.parse('ws://$target/documents/v1/ws')}));
-  final db = WincheDatabase(app)..config = const WincheDatabaseConfig(allowSignedOut: true, inMemory: true);
+  final db = WincheDatabase(app)..settings = const WincheDatabaseSettings(allowSignedOut: true, inMemory: true);
 
   final doc = await db.doc('public/welcome').get();
   stdout.writeln('signed-out read public/welcome: exists=${doc.exists} data=${doc.data()}');

@@ -5,10 +5,14 @@ part of '../../winche_database.dart';
 /// IndexedDB and needs no file-system path.
 const bool _kIsWeb = identical(0, 0.0);
 
+/// The old name of [WincheDatabaseSettings].
+@Deprecated('Use WincheDatabaseSettings. Removed in the next major version.')
+typedef WincheDatabaseConfig = WincheDatabaseSettings;
+
 /// All configuration for a [WincheDatabase] in one object — connection knobs,
 /// local-store selection, and sync policy. Mirrors `winche_storage`'s
 /// `WincheStorageConfig`.
-final class WincheDatabaseConfig {
+final class WincheDatabaseSettings {
   /// Keep-alive ping interval. Defaults to 30 seconds. A socket that receives
   /// nothing for two intervals (plus 15 seconds) is treated as dead and replaced.
   final Duration pingInterval;
@@ -51,7 +55,7 @@ final class WincheDatabaseConfig {
   /// someone signs in: its streams complete, as on any user switch.
   final bool allowSignedOut;
 
-  const WincheDatabaseConfig({
+  const WincheDatabaseSettings({
     this.pingInterval = const Duration(seconds: 30),
     this.requestTimeout = const Duration(seconds: 60),
     this.maxBackoff = const Duration(seconds: 30),
@@ -135,26 +139,33 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
   /// one) was established — i.e. whether this facade has actually been used.
   bool _started = false;
 
-  WincheDatabaseConfig _config = const WincheDatabaseConfig();
+  WincheDatabaseSettings _config = const WincheDatabaseSettings();
 
   /// Tuning for the sessions this facade builds.
-  WincheDatabaseConfig get config => _config;
+  WincheDatabaseSettings get settings => _config;
 
   /// Throws a [StateError] once the current session has started — opened its
   /// store or dialled its socket.
   ///
   /// Construction is lazy, so a session core bound synchronously during
   /// `WincheDatabase.instance` has not started yet. That window is what lets
-  /// `instance.config = ...` work on the line after `.instance`.
-  set config(WincheDatabaseConfig value) {
+  /// `instance.settings = ...` work on the line after `.instance`.
+  set settings(WincheDatabaseSettings value) {
     if (_started) {
       throw StateError(
-        'WincheDatabase.config cannot be changed once the database has been '
+        'WincheDatabase.settings cannot be changed once the database has been '
         'used. Set it immediately after first obtaining the instance.',
       );
     }
     _config = value;
   }
+
+  /// The old name of [settings].
+  @Deprecated('Use settings. Removed in the next major version.')
+  WincheDatabaseSettings get config => settings;
+
+  @Deprecated('Use settings. Removed in the next major version.')
+  set config(WincheDatabaseSettings value) => settings = value;
 
   final _connectionRelay = StatusRelay<ConnectionState>(
     ConnectionState.disconnected,
@@ -330,7 +341,7 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
     return session;
   }
 
-  /// The bound session; or, with [WincheDatabaseConfig.allowSignedOut] and
+  /// The bound session; or, with [WincheDatabaseSettings.allowSignedOut] and
   /// nobody signed in, a signed-out one bound now — no token, memory-only
   /// cache. Null when there's neither.
   _DatabaseSession? _currentSession() {

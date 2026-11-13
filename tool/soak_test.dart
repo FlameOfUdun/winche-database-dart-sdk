@@ -51,7 +51,7 @@ Future<void> main(List<String> args) async {
     ),
   );
   final db = WincheDatabase.instance
-    ..config = const WincheDatabaseConfig(
+    ..settings = const WincheDatabaseSettings(
       conflictPolicy: ConflictPolicy.clientWins, // auto-resolve so the queue never stalls
       cacheSizeBytes: 16 * 1024, // small cap → eviction fires under churn
     );

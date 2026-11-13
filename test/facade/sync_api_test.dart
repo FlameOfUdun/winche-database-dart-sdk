@@ -43,10 +43,10 @@ void main() {
   });
 
   test('a fresh in-memory db has no pending writes', () async {
-    // Old test built a persistent-store-shaped `WincheDatabaseConfig(uri:,
+    // Old test built a persistent-store-shaped `WincheDatabaseSettings(uri:,
     // inMemory: true)` directly via the removed `WincheDatabase(config)`
     // factory. That config shape is gone; `inMemory` on the current
-    // `WincheDatabaseConfig` only takes effect via the identity-driven
+    // `WincheDatabaseSettings` only takes effect via the identity-driven
     // `onSessionChanged` path (`_storeFor`), which is out of reach from a
     // debugBindStore-based test (see the not-converted namespaceResolver
     // tests in auth_switch_test.dart / database_ctor_test.dart for why).

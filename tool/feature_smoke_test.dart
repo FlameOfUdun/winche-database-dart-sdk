@@ -163,7 +163,7 @@ Future<void> main(List<String> args) async {
   // winche_database has no sign-in surface of its own, so SmokeAuth stands in
   // for a real auth backend and hands core a token equal to the uid.
   Winche.initializeApp(options: WincheOptions(endpoints: {'database': Uri.parse(wsUrl)}));
-  db = WincheDatabase.instance..config = const WincheDatabaseConfig(inMemory: true);
+  db = WincheDatabase.instance..settings = const WincheDatabaseSettings(inMemory: true);
   auth = SmokeAuth(Winche.app);
   auth.announce(WincheIdentity(uid));
   await Winche.app.settled;
