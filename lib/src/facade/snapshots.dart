@@ -97,7 +97,16 @@ final class DocumentSnapshot<T> {
     required this.updateTimeRaw,
     required this.version,
     this.metadata = const SnapshotMetadata(),
-  });
+    Map<String, WireDocument>? included,
+    List<List<String>>? expand,
+  })  : _included = included,
+        _expand = expand;
+
+  /// Referenced documents that came with this read (`expand`), by path.
+  final Map<String, WireDocument>? _included;
+
+  /// The reference paths still to follow from this document, split into fields.
+  final List<List<String>>? _expand;
 
   /// The [DocumentReference] for this document.
   final DocumentReference<T> reference;
@@ -139,18 +148,68 @@ final class DocumentSnapshot<T> {
 
   /// Returns the document data as a native map regardless of `T`,
   /// or null when [exists] is false.
+  ///
+  /// A reference is its document's path, unless it was expanded (`expand`) and
+  /// its document came with the read: then it's that document's
+  /// [DocumentSnapshot] (whose own data has the rest of the path expanded).
   Map<String, Object?>? nativeData() {
     if (!exists || rawData == null) return null;
+    final expand = _expand;
+    if (expand == null || expand.isEmpty || _included == null) {
+      return {
+        for (final entry in rawData!.entries) entry.key: fromValue(entry.value),
+      };
+    }
     return {
-      for (final entry in rawData!.entries) entry.key: fromValue(entry.value),
+      for (final entry in rawData!.entries)
+        entry.key: _native(entry.value, [
+          for (final p in expand)
+            if (p.isNotEmpty && p.first == entry.key) p.sublist(1)
+        ]),
     };
   }
+
+  /// [value] as native data, expanding the references [paths] (what's left of
+  /// each expand path at this point) reach.
+  Object? _native(Value value, List<List<String>> paths) {
+    if (paths.isEmpty) return fromValue(value);
+    return switch (value) {
+      ReferenceValue(:final path) => _expanded(path, paths) ?? path,
+      ArrayValue(:final elements) => [for (final e in elements) _native(e, paths)],
+      MapValue(:final fields) => {
+          for (final entry in fields.entries)
+            entry.key: _native(entry.value, [
+              for (final p in paths)
+                if (p.isNotEmpty && p.first == entry.key) p.sublist(1)
+            ]),
+        },
+      _ => fromValue(value),
+    };
+  }
+
+  DocumentSnapshot<Map<String, Object?>>? _expanded(String path, List<List<String>> rest) {
+    final target = path.startsWith('/') ? path.substring(1) : path;
+    final wire = _included?[target];
+    if (wire == null) return null;   // missing or not readable: stays a pointer
+    return DocumentSnapshot<Map<String, Object?>>._fromWire(reference._db.doc(target), wire,
+        metadata: metadata, included: _included, expand: [for (final p in rest) if (p.isNotEmpty) p]);
+  }
+
+  /// The referenced documents that came with this read (`expand`), by path:
+  /// those the caller may read. Empty without `expand`.
+  Map<String, DocumentSnapshot<Map<String, Object?>>> get included => {
+        for (final e in (_included ?? const <String, WireDocument>{}).entries)
+          e.key: DocumentSnapshot<Map<String, Object?>>._fromWire(reference._db.doc(e.key), e.value,
+              metadata: metadata, included: _included),
+      };
 
   /// Creates a [DocumentSnapshot] from a [WireDocument].
   factory DocumentSnapshot._fromWire(
     DocumentReference<T> reference,
     WireDocument wire, {
     SnapshotMetadata metadata = const SnapshotMetadata(),
+    Map<String, WireDocument>? included,
+    List<List<String>>? expand,
   }) {
     return DocumentSnapshot._(
       reference: reference,
@@ -161,6 +220,8 @@ final class DocumentSnapshot<T> {
       updateTimeRaw: wire.updateTime,
       version: wire.version,
       metadata: metadata,
+      included: included,
+      expand: expand,
     );
   }
 

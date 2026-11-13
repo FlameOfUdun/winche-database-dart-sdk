@@ -239,10 +239,14 @@ abstract class _LiveListener<TSnapshot> {
 /// `metadata.hasPendingWrites` is true when the overlay added un-acked local
 /// writes. Backed by a [_QueryFeed].
 final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
-  _QueryListener(super._db, this._spec, this._converter);
+  _QueryListener(super._db, this._spec, this._converter, [this._expand]);
 
   final QuerySpec _spec;
   final Converter<T> _converter;
+  final List<String>? _expand;
+
+  /// With `expand`: the referenced documents last sent by the server.
+  Map<String, WireDocument>? _included;
 
   /// Last server-authoritative set (null until the first server snapshot).
   List<WireDocument>? _serverDocs;
@@ -252,11 +256,15 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
   bool _first = true;
 
   @override
-  _LiveFeed _createFeed() => _QueryFeed(_db, _session, _spec);
+  _LiveFeed _createFeed() => _QueryFeed(_db, _session, _spec, _expand);
 
   @override
   Future<void> _storeServerDocs(_FeedUpdate update) async {
     _serverDocs = update.docs;
+    if (update.included != null) {
+      _included = update.included;
+      await _session.cache.putConfirmedAll(update.included!.values.toList()); // warm for offline reads
+    }
     final paths = [for (final d in update.docs) d.path];
     await _session.targets.setMembers(_spec, paths);
     _session.activeTargets.pin(this, paths);
@@ -295,7 +303,7 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
       for (final wire in shaped)
         DocumentSnapshot<T>._fromWire(
             _db.doc(wire.path).withConverter(_converter), wire,
-            metadata: metadata),
+            metadata: metadata, included: _included, expand: _splitExpand(_expand)),
     ];
 
     final changes = _first
@@ -398,9 +406,13 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
 /// query-vs-document split mirrors the server: `doc.listen` is authorized as
 /// `get` (not the collection `list`).
 final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
-  _DocumentListener(super._db, this._ref);
+  _DocumentListener(super._db, this._ref, [this._expand]);
 
   final DocumentReference<T> _ref;
+  final List<String>? _expand;
+
+  /// With `expand`: the referenced documents last sent by the server.
+  Map<String, WireDocument>? _included;
 
   String get _path => _ref.path;
 
@@ -408,10 +420,14 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
   WireDocument? _serverDoc;
 
   @override
-  _LiveFeed _createFeed() => _DocumentFeed(_db, _session, _path);
+  _LiveFeed _createFeed() => _DocumentFeed(_db, _session, _path, _expand);
 
   @override
   Future<void> _storeServerDocs(_FeedUpdate update) async {
+    if (update.included != null) {
+      _included = update.included;
+      await _session.cache.putConfirmedAll(update.included!.values.toList());
+    }
     _serverDoc = update.docs.isEmpty ? null : update.docs.first;
     if (_serverDoc != null) {
       _session.activeTargets.pin(this, [_path]);
@@ -448,6 +464,6 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
     controller.add(eff.document == null
         ? DocumentSnapshot<T>._missing(_ref, metadata: metadata)
         : DocumentSnapshot<T>._fromWire(_ref, eff.document!,
-            metadata: metadata));
+            metadata: metadata, included: _included, expand: _splitExpand(_expand)));
   }
 }

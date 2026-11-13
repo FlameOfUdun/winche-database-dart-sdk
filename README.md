@@ -316,6 +316,26 @@ final recent = await db.collectionGroup('sessionHistory')
     .get();
 ```
 
+### Expanding references
+
+A reference field (a `DocumentReference` written into a document) reads back as its document's path. Ask for it to be
+followed and its document comes with the read:
+
+```dart
+final visit = await db.doc('visits/v1').expand(['patient', 'patient.doctor', 'team']).get();
+final patient = visit.data()!['patient'] as DocumentSnapshot<Map<String, Object?>>;
+final doctor = patient.data()!['doctor'] as DocumentSnapshot<Map<String, Object?>>;   // followed inside the patient
+
+db.collection('visits').where('ward', isEqualTo: 'icu').expand(['patient']).snapshots().listen((s) { … });
+```
+
+- Paths walk maps, lists (each item) and references: `patient.doctor` is the `doctor` of the `patient`'s document.
+  10 paths, 4 references deep, 100 documents per read at most.
+- A reference whose document is missing, or that the rules don't let the user read, stays a path (`String`).
+- Live: when a referenced document changes, the listener emits a new snapshot (a query's `docChanges` are empty when
+  only referenced documents changed).
+- Expanded reads need the server: offline, `get()` reads from the cache with references as paths.
+
 ## Real-time listeners
 
 `snapshots()` returns a stream that emits an immediate cache-first snapshot, then

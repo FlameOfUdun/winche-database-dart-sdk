@@ -16,6 +16,10 @@ public API are unchanged.
 deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseException`s.
 
 - **`settings`**, like every Winche package: `WincheDatabase.instance.settings = WincheDatabaseSettings(…)`. `config` and `WincheDatabaseConfig` remain, deprecated.
+- **Expanding references:** `doc(…).expand(['patient', 'patient.doctor'])` and `query.expand([…])` follow reference
+  fields on `get()` and `snapshots()` (server `expand`, PROTOCOL §7.7). In `data()` an expanded reference is its
+  document's `DocumentSnapshot` instead of its path; `snapshot.included` lists them. Live, a change to a referenced
+  document emits a new snapshot (no `docChanges` when the results didn't change). Needs Winche.Database with `expand`.
 
 ## 7.3.0
 

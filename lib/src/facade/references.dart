@@ -11,21 +11,42 @@ String _generateId() {
   );
 }
 
+/// Splits expand paths into their fields.
+List<List<String>>? _splitExpand(List<String>? expand) =>
+    expand == null || expand.isEmpty ? null : [for (final p in expand) p.split('.')];
+
 /// A reference to a single document in the Winche Database.
 final class DocumentReference<T> {
-  DocumentReference._(this._db, this.path, this._converter);
+  DocumentReference._(this._db, this.path, this._converter, [this._expand]);
 
   final WincheDatabase _db;
   final Converter<T> _converter;
   final String path;
+
+  /// Reference fields to follow on reads (see [expand]).
+  final List<String>? _expand;
 
   /// The document ID.
   String get id => docId(path);
 
   /// Returns a typed reference that converts document data to and from [R].
   DocumentReference<R> withConverter<R>(Converter<R> converter) {
-    return DocumentReference<R>._(_db, path, converter);
+    return DocumentReference<R>._(_db, path, converter, _expand);
   }
+
+  /// This reference, with the reference fields at [paths] followed on [get] and
+  /// [snapshots] (PROTOCOL §7.7): `['patient', 'patient.doctor', 'team']`.
+  ///
+  /// In the snapshot's data an expanded reference is its document's
+  /// [DocumentSnapshot] instead of its path (and that snapshot's data has the
+  /// rest of the path expanded: `patient.doctor` is the patient's snapshot, whose
+  /// `doctor` is the doctor's). A reference whose document is missing or that
+  /// the rules don't let the caller read stays a path. Live: a change to a
+  /// referenced document emits a new snapshot too.
+  ///
+  /// Expanded reads need the server; offline, [get] reads from the cache with
+  /// references as paths.
+  DocumentReference<T> expand(List<String> paths) => DocumentReference<T>._(_db, path, _converter, List.unmodifiable(paths));
 
   /// The parent [CollectionReference] (carries the same converter).
   CollectionReference<T> get parent {
@@ -45,6 +66,18 @@ final class DocumentReference<T> {
   /// Fetches the document once (from cache when offline).
   Future<DocumentSnapshot<T>> get(
       [GetOptions options = const GetOptions()]) async {
+    final expand = _expand;
+    if (expand != null && expand.isNotEmpty && options.source != Source.cache) {
+      try {
+        final result = await _db._transport.request(docGetFrame('', path, expand: expand));
+        final doc = result['document'];
+        if (doc == null) return DocumentSnapshot<T>._missing(this);
+        return DocumentSnapshot<T>._fromWire(this, WireDocument.fromJson(doc as Map<String, Object?>),
+            included: includedOf(result['included']) ?? const {}, expand: _splitExpand(expand));
+      } on WincheDatabaseException catch (e) {
+        if (e.code != WincheErrorCode.unavailable || options.source == Source.server) rethrow;
+      }
+    }
     final result = await _db.reads.getDocument(path, options);
     return _db._snapshotFrom(this, result);
   }
@@ -99,7 +132,7 @@ final class DocumentReference<T> {
   /// local writes overlaid for latency compensation. Emits a non-existent
   /// snapshot when the document is absent.
   Stream<DocumentSnapshot<T>> snapshots() =>
-      _DocumentListener<T>(_db, this).stream();
+      _DocumentListener<T>(_db, this, _expand).stream();
 
   @override
   String toString() => 'DocumentReference($path)';
@@ -154,17 +187,27 @@ final class CollectionReference<T> extends QueryReference<T> {
 
 /// An immutable, composable query over a collection.
 final class QueryReference<T> {
-  QueryReference._(this._db, this._collection, this._spec, this._converter);
+  QueryReference._(this._db, this._collection, this._spec, this._converter, [this._expand]);
 
   final WincheDatabase _db;
   final String _collection;
   final QuerySpec _spec;
   final Converter<T> _converter;
 
+  /// Reference fields to follow on reads (see [expand]).
+  final List<String>? _expand;
+
   /// Returns a typed query that converts document data to and from [R].
   QueryReference<R> withConverter<R>(Converter<R> converter) {
-    return QueryReference<R>._(_db, _collection, _spec, converter);
+    return QueryReference<R>._(_db, _collection, _spec, converter, _expand);
   }
+
+  /// This query, with the reference fields at [paths] followed in every result
+  /// (see [DocumentReference.expand]). Live: a change to a referenced document
+  /// emits a new snapshot (with no `docChanges` when the results themselves
+  /// didn't change).
+  QueryReference<T> expand(List<String> paths) =>
+      QueryReference<T>._(_db, _collection, _spec, _converter, List.unmodifiable(paths));
 
   /// Adds a field filter. Multiple calls AND-compose.
   /// Multiple named args in a single call also AND-compose (I4).
@@ -354,6 +397,14 @@ final class QueryReference<T> {
   /// offline).
   Future<QuerySnapshot<T>> get(
       [GetOptions options = const GetOptions()]) async {
+    final expand = _expand;
+    if (expand != null && expand.isNotEmpty && options.source != Source.cache) {
+      try {
+        return await _getExpanded(expand);
+      } on WincheDatabaseException catch (e) {
+        if (e.code != WincheErrorCode.unavailable || options.source == Source.server) rethrow;
+      }
+    }
     final result = await _db.reads.runQuery(_spec, options);
     final docs = [
       for (final wire in result.documents)
@@ -384,11 +435,33 @@ final class QueryReference<T> {
     );
   }
 
+  Future<QuerySnapshot<T>> _getExpanded(List<String> expand) async {
+    final result = await _db._transport.request(queryFrame('', _spec, expand: expand));
+    final included = includedOf(result['included']) ?? const <String, WireDocument>{};
+    final paths = _splitExpand(expand);
+    final docs = [
+      for (final d in (result['documents'] as List<Object?>? ?? const []))
+        if (d is Map<String, Object?>)
+          DocumentSnapshot<T>._fromWire(_db.doc(d['path'] as String).withConverter(_converter), WireDocument.fromJson(d),
+              included: included, expand: paths),
+    ];
+    return QuerySnapshot<T>(
+      docs: List.unmodifiable(docs),
+      docChanges: [
+        for (var i = 0; i < docs.length; i++)
+          DocumentChange<T>(type: DocumentChangeType.added, oldIndex: -1, newIndex: i, doc: docs[i]),
+      ],
+      readTime: DateTime.now().toUtc(),
+      resumeToken: null,
+      hasMore: result['hasMore'] == true,
+    );
+  }
+
   /// Returns a live [Stream] of [QuerySnapshot]s (PROTOCOL §7.6).
   /// When offline support is configured, emits cache-first and reacts to local
   /// writes; otherwise delegates directly to the server-only machine.
   Stream<QuerySnapshot<T>> snapshots() {
-    return _QueryListener<T>(_db, _spec, _converter).stream();
+    return _QueryListener<T>(_db, _spec, _converter, _expand).stream();
   }
 
   /// Returns the number of documents matching this query.
@@ -450,7 +523,7 @@ final class QueryReference<T> {
   QuerySpec get spec => _spec;
 
   QueryReference<T> _withSpec(QuerySpec spec) {
-    return QueryReference<T>._(_db, _collection, spec, _converter);
+    return QueryReference<T>._(_db, _collection, spec, _converter, _expand);
   }
 
   QueryReference<T> _withFilter(FilterSpec filter) {

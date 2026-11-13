@@ -173,6 +173,7 @@ sealed class ServerFrame {
           resumeToken: json['resumeToken'] != null
               ? (json['resumeToken'] as num).toInt()
               : null,
+          included: includedOf(json['included']),
         ),
       'listen.delta' => ListenDeltaFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -185,6 +186,8 @@ sealed class ServerFrame {
           resumeToken: json['resumeToken'] != null
               ? (json['resumeToken'] as num).toInt()
               : null,
+          included: includedOf(json['included']),
+          excluded: [for (final p in (json['excluded'] as List<Object?>? ?? const [])) p as String],
         ),
       'listen.current' => ListenCurrentFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -224,6 +227,11 @@ final class ErrorFrame extends ServerFrame {
   WincheDatabaseException toException() => WincheDatabaseException.fromWire(error);
 }
 
+/// The `included` of a response or frame (PROTOCOL §7.7): referenced documents by path, or null when absent.
+Map<String, WireDocument>? includedOf(Object? json) => json is Map<String, Object?>
+    ? {for (final e in json.entries) e.key: WireDocument.fromJson(e.value as Map<String, Object?>)}
+    : null;
+
 /// `{"type": "listen.snapshot", ...}` — full state snapshot (PROTOCOL §7.6).
 final class ListenSnapshotFrame extends ServerFrame {
   const ListenSnapshotFrame({
@@ -231,7 +239,11 @@ final class ListenSnapshotFrame extends ServerFrame {
     required this.documents,
     required this.readTime,
     this.resumeToken,
+    this.included,
   });
+
+  /// With `expand`: every referenced document the caller may read, by path (replaces the previous set).
+  final Map<String, WireDocument>? included;
 
   final String subscriptionId;
   final List<WireDocument> documents;
@@ -249,7 +261,15 @@ final class ListenDeltaFrame extends ServerFrame {
     required this.count,
     required this.readTime,
     this.resumeToken,
+    this.included,
+    this.excluded = const [],
   });
+
+  /// With `expand`: referenced documents new or changed since the last frame.
+  final Map<String, WireDocument>? included;
+
+  /// With `expand`: referenced documents no longer included.
+  final List<String> excluded;
 
   final String subscriptionId;
   final List<WireChange> changes;
@@ -288,10 +308,11 @@ final class UnknownFrame extends ServerFrame {
 Map<String, Object?> pingFrame(String id) => {'type': 'ping', 'id': id};
 
 /// `{"type": "doc.get", "id": "...", "path": "..."}` (PROTOCOL §7.4)
-Map<String, Object?> docGetFrame(String id, String path) => {
+Map<String, Object?> docGetFrame(String id, String path, {List<String>? expand}) => {
       'type': 'doc.get',
       'id': id,
       'path': path,
+      if (expand != null && expand.isNotEmpty) 'expand': expand,
     };
 
 /// `{"type": "doc.getAll", "id": "...", "paths": [...]}` (PROTOCOL §7.4)
@@ -302,10 +323,11 @@ Map<String, Object?> docGetAllFrame(String id, List<String> paths) => {
     };
 
 /// `{"type": "query", "id": "...", "query": {...}}` (PROTOCOL §7.4)
-Map<String, Object?> queryFrame(String id, QuerySpec query) => {
+Map<String, Object?> queryFrame(String id, QuerySpec query, {List<String>? expand}) => {
       'type': 'query',
       'id': id,
       'query': query.toJson(),
+      if (expand != null && expand.isNotEmpty) 'expand': expand,
     };
 
 /// `{"type": "count", "id": "...", "query": {...}}`
@@ -330,12 +352,13 @@ Map<String, Object?> aggregateFrame(
     };
 
 /// `{"type": "doc.listen", "id": "...", "path": "...", "protocol": ..., "resumeToken"?: ...}`
-Map<String, Object?> docListenFrame(String id, String path, {int? resumeToken}) {
+Map<String, Object?> docListenFrame(String id, String path, {int? resumeToken, List<String>? expand}) {
   final frame = <String, Object?>{
     'type': 'doc.listen',
     'id': id,
     'path': path,
     'protocol': wireProtocolVersion,
+    if (expand != null && expand.isNotEmpty) 'expand': expand,
   };
   if (resumeToken != null) frame['resumeToken'] = resumeToken;
   return frame;
@@ -395,12 +418,14 @@ Map<String, Object?> listenFrame(
   String id,
   QuerySpec query, {
   int? resumeToken,
+  List<String>? expand,
 }) {
   final frame = <String, Object?>{
     'type': 'listen',
     'id': id,
     'query': query.toJson(),
     'protocol': wireProtocolVersion,
+    if (expand != null && expand.isNotEmpty) 'expand': expand,
   };
   if (resumeToken != null) frame['resumeToken'] = resumeToken;
   return frame;
