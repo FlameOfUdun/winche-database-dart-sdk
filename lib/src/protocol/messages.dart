@@ -154,6 +154,7 @@ sealed class ServerFrame {
       'welcome' => WelcomeFrame(
           connectionId: req<String>('connectionId'),
           protocol: opt<num>('protocol')?.toInt(),
+          expandLimit: opt<num>('expandLimit')?.toInt(),
         ),
       'response' => ResponseFrame(
           id: req<String>('id'),
@@ -203,10 +204,13 @@ sealed class ServerFrame {
 
 /// `{"type": "welcome", "connectionId": "...", "protocol"?: 3}`
 final class WelcomeFrame extends ServerFrame {
-  const WelcomeFrame({required this.connectionId, this.protocol});
+  const WelcomeFrame({required this.connectionId, this.protocol, this.expandLimit});
 
   final String connectionId;
   final int? protocol;
+
+  /// The most documents (with files and users) one expand response includes, on this server.
+  final int? expandLimit;
 }
 
 /// `{"type": "response", "id": "...", "result": {...}}`

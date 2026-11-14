@@ -8,7 +8,8 @@ typedef ExpandPath = ({List<String> segments});
 ExpandPath parseExpandPath(String path) => (segments: path.split('.'));
 
 /// The most references followed one after another, and the most documents one
-/// read includes: the server's limits (PROTOCOL §7.7).
+/// read includes by default: the server's limits (PROTOCOL §7.7). A server may
+/// set another document limit (`expandLimit` in its `welcome`).
 const int maxExpandDepth = 4;
 const int maxExpandDocuments = 100;
 
@@ -21,8 +22,9 @@ const int maxExpandDocuments = 100;
 Future<Map<String, WireDocument>> walkReferences(
   Iterable<WireDocument?> roots,
   List<ExpandPath> paths,
-  Future<WireDocument?> Function(String path) resolve,
-) async {
+  Future<WireDocument?> Function(String path) resolve, {
+  int limit = maxExpandDocuments,
+}) async {
   final found = <String, WireDocument>{};
   final asked = <String>{};
   var level = <(String, List<String>)>[];
@@ -34,7 +36,7 @@ Future<Map<String, WireDocument>> walkReferences(
   }
   for (var depth = 1; level.isNotEmpty && depth <= maxExpandDepth; depth++) {
     for (final (path, _) in level) {
-      if (asked.contains(path) || asked.length >= maxExpandDocuments) continue;
+      if (asked.contains(path) || asked.length >= limit) continue;
       asked.add(path);
       final doc = await resolve(path);
       if (doc != null) found[path] = doc;

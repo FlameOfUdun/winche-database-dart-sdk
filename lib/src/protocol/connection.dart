@@ -80,6 +80,9 @@ final class ConnectionConfig {
 
 /// WebSocket protocol connection to a Winche Database server (PROTOCOL §7).
 class ProtocolConnection {
+  /// The server's expand limit, from its `welcome` (null until one arrives, or from a server that doesn't send it).
+  int? expandLimit;
+
   ProtocolConnection(this.config)
       : _channelFactory = config.channelFactory ?? _defaultFactory,
         _sleeper = config.sleeper ?? _defaultSleeper;
@@ -520,7 +523,8 @@ class ProtocolConnection {
     }
 
     switch (frame) {
-      case WelcomeFrame():
+      case WelcomeFrame(:final expandLimit):
+        if (expandLimit != null) this.expandLimit = expandLimit;
         _welcomeCompleter?.complete();
         _welcomeCompleter = null;
 

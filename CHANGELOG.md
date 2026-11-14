@@ -23,7 +23,7 @@ deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseExcep
   `doc(…).expand([...])` / `query.expand([...])` fill links' `data()` (server `expand`, PROTOCOL §7.7), nested
   through referenced documents; a file or user reference brings the file's record or the user's profile.
   `Link.withConverter`, `DocumentSnapshot.withConverter`, `snapshot.get<T>(field)`. Writing a `Link` stores the
-  reference. Live, links follow changes; offline, document links are followed through the
+  reference. Offline expansion follows the server's expand limit (`expandLimit` in `welcome`). Live, links follow changes; offline, document links are followed through the
   cache with the user's unsynced writes. Needs Winche.Database with `expand`.
 
 ## 7.3.0

@@ -366,7 +366,8 @@ snapshot.withConverter(Visit.converter).data();   // re-type a snapshot without 
 ```
 
 - Paths walk maps, lists (each item) and references: `patient.doctor` is the `doctor` of the `patient`'s document.
-  10 paths, 4 references deep, 100 documents per read at most.
+  10 paths, 4 references deep, and the server's expand limit (100 unless it's set otherwise) per read at most;
+  offline, the SDK uses the limit the server last announced.
 - Live: when a linked document, file or user changes, the listener emits a new snapshot (a query's `docChanges` are
   empty when only linked things changed).
 - **Offline:** document links are followed through the cache (what expanded reads and listeners brought before

@@ -18,10 +18,11 @@ String _generateId() {
 Future<Map<String, WireDocument>> _includedLocally(WincheDatabase db, Iterable<WireDocument?> roots, List<ExpandPath> paths,
     {Map<String, WireDocument>? fromServer}) {
   final session = db._require();
+  final limit = switch (session.transport) { WsTransport(:final expandLimit?) => expandLimit, _ => maxExpandDocuments };
   return walkReferences(roots, paths, (path) async {
     final base = fromServer != null ? fromServer[path] : await session.cache.confirmed(path);
     return applyOverlay(base, await session.queue.forPath(path)).document;
-  });
+  }, limit: limit);
 }
 
 /// Splits expand paths into their fields.

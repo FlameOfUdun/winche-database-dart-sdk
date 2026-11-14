@@ -21,6 +21,9 @@ final class WsTransport implements Transport {
   @override
   ConnectionState get connectionState => _states.value;
 
+  /// The server's expand limit, once it said (see [ProtocolConnection.expandLimit]).
+  int? get expandLimit => _connection?.expandLimit;
+
   @override
   Stream<ServerFrame> listenEvents(String subscriptionId) async* {
     final connection = await _ensureConnected();
