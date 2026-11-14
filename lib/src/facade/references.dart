@@ -52,9 +52,8 @@ final class DocumentReference<T> {
   ///
   /// In `data()` a reference field is a [Link], whose `data()` is the referenced
   /// document's fields when it was expanded (and its own references are links,
-  /// expanded along the rest of the path). `file:scan` and `user:author` make
-  /// those string fields links too, with the file's record or the user's public
-  /// profile. A link whose target is missing or hidden from the user has no
+  /// expanded along the rest of the path), the file's record for a file
+  /// reference, the user's public profile for a user reference. A link whose target is missing or hidden from the user has no
   /// data, but its `target` is there. Live: a change to a linked document, file
   /// or user emits a new snapshot. Offline, links are followed through the
   /// cache.

@@ -15,6 +15,8 @@ int typeRank(Value v) {
     StringValue() => 50,
     BytesValue() => 60,
     ReferenceValue() => 70,
+    FileRefValue() => 72,
+    UserRefValue() => 74,
     GeoPointValue() => 80,
     ArrayValue() => 90,
     MapValue() => 100,
@@ -52,6 +54,10 @@ int compareValues(Value a, Value b) {
     case 70:
       return _compareCodepoints(
           (a as ReferenceValue).path, (b as ReferenceValue).path);
+    case 72:
+      return _compareCodepoints((a as FileRefValue).path, (b as FileRefValue).path);
+    case 74:
+      return _compareCodepoints((a as UserRefValue).uid, (b as UserRefValue).uid);
     case 80:
       final ga = a as GeoPointValue;
       final gb = b as GeoPointValue;

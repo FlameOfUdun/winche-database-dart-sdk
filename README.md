@@ -318,12 +318,22 @@ final recent = await db.collectionGroup('sessionHistory')
 
 ### Expanding references
 
-A reference field (a `DocumentReference` written into a document) reads back as a **`Link`**: `kind`
-(`LinkKind.document`), `target` (the path) and `data()`, which is null unless the read **expanded** it:
+A reference field reads back as a **`Link`**: `kind` (`LinkKind.document`, `.file` or `.user`), `target` (the
+document path, file path or uid) and `data()`, which is null unless the read **expanded** it. Write references with
+`Link.document('patients/p1')` (or a `DocumentReference`), `Link.file('scans/a.png')` and `Link.user(uid)`; they're
+stored typed (`docRefValue`, `fileRefValue`, `userRefValue`), which is how the server knows what to resolve:
+
+```dart
+await db.doc('visits/v1').set({
+  'patient': Link.document('patients/p1'),
+  'scan': Link.file('scans/a.png'),
+  'author': Link.user(auth.currentUser!.uid),
+});
+```
 
 ```dart
 final visit = await db.doc('visits/v1')
-    .expand(['patient.doctor', 'team', 'file:scan', 'user:author'])
+    .expand(['patient.doctor', 'team', 'scan', 'author'])
     .get();
 final data = visit.data()!;
 
@@ -332,23 +342,21 @@ patient.target;                                           // 'patients/p1'
 patient.data()?['name'];                                  // the patient's fields (expanded)
 (patient.data()?['doctor'] as Link?)?.data()?['name'];    // nested: the patient's own references are links
 for (final member in (data['team'] as List).cast<Link>()) { member.data()?['name']; }
-(data['scan'] as Link).data()?['sizeBytes'];              // file: → the file's record
-(data['author'] as Link).data()?['displayName'];          // user: → the user's public profile
+(data['scan'] as Link).data()?['sizeBytes'];              // a file → its record
+(data['author'] as Link).data()?['displayName'];          // a user → their public profile
 ```
 
 - A link's `data()` is null when its target wasn't expanded, is missing, or is hidden from the user by the rules; its
   `target` is always there.
-- `file:` and `user:` say what a string field holds (a file path, a uid). Expanded, the field is a `Link`
-  (`LinkKind.file` / `LinkKind.user`); not expanded, it's the plain string. `Link.from(value, LinkKind.file)` takes
-  either, so a model's field is always a `Link`.
+- A plain string is never a link, and never expanded: store references as `Link`s.
 - **Models:** `withConverter` works on links and on snapshots, like on references. Writing a `Link` stores its
-  `target` (a reference, or the string), never its data, so a model saves back as it was read:
+  reference, never its data, so a model saves back as it was read:
 
 ```dart
 class Visit {
   Visit.fromMap(Map<String, Object?> m)
       : patient = (m['patient'] as Link).withConverter(Patient.converter),
-        scan = Link.from(m['scan'], LinkKind.file);
+        scan = m['scan'] as Link?;
   final Link<Patient> patient;
   final Link? scan;
   Map<String, Object?> toMap() => {'patient': patient, 'scan': scan};

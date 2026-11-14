@@ -16,11 +16,14 @@ public API are unchanged.
 deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseException`s.
 
 - **`settings`**, like every Winche package: `WincheDatabase.instance.settings = WincheDatabaseSettings(…)`. `config` and `WincheDatabaseConfig` remain, deprecated.
+- **Typed references:** document references are written as `docRefValue` (`referenceValue` is still read), and
+  there are file and user references (`fileRefValue`, `userRefValue`; `FileRefValue`, `UserRefValue`). Write them
+  with `Link.document(path)`, `Link.file(path)`, `Link.user(uid)`. Needs a Winche.Database that knows the new tags.
 - **Expanding references:** reference fields read back as a `Link` (`kind`, `target`, `data()`), not a path string.
   `doc(…).expand([...])` / `query.expand([...])` fill links' `data()` (server `expand`, PROTOCOL §7.7), nested
-  through referenced documents; `file:` / `user:` paths make those string fields links with the file's record or the
-  user's profile. `Link.withConverter`, `DocumentSnapshot.withConverter`, `Link.from`, `snapshot.get<T>(field)`.
-  Writing a `Link` stores its target. Live, links follow changes; offline, document links are followed through the
+  through referenced documents; a file or user reference brings the file's record or the user's profile.
+  `Link.withConverter`, `DocumentSnapshot.withConverter`, `snapshot.get<T>(field)`. Writing a `Link` stores the
+  reference. Live, links follow changes; offline, document links are followed through the
   cache with the user's unsynced writes. Needs Winche.Database with `expand`.
 
 ## 7.3.0

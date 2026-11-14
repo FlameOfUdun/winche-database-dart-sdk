@@ -65,11 +65,17 @@ Value toValue(Object? obj, {String keyPath = ''}) {
 
   if (obj is GeoPoint) return GeoPointValue(obj.latitude, obj.longitude);
 
-  // DocumentReference fields become referenceValue.
+  // DocumentReference fields become document references (docRefValue).
   if (obj is DocumentReference) return ReferenceValue(obj.path);
 
-  // A Link stores what it points at: a reference, or the file path / uid string. Never its data.
-  if (obj is Link) return obj.kind == LinkKind.document ? ReferenceValue(obj.target) : StringValue(obj.target);
+  // A Link stores what it points at, never its data.
+  if (obj is Link) {
+    return switch (obj.kind) {
+      LinkKind.document => ReferenceValue(obj.target),
+      LinkKind.file => FileRefValue(obj.target),
+      LinkKind.user => UserRefValue(obj.target),
+    };
+  }
 
   if (obj is List) {
     return ArrayValue([
@@ -137,6 +143,8 @@ Object? fromValue(Value value) {
     GeoPointValue(:final latitude, :final longitude) =>
       GeoPoint(latitude, longitude),
     ReferenceValue(:final path) => path,
+    FileRefValue(:final path) => path,
+    UserRefValue(:final uid) => uid,
     ArrayValue(:final elements) => [for (final e in elements) fromValue(e)],
     MapValue(:final fields) => {
         for (final entry in fields.entries) entry.key: fromValue(entry.value),

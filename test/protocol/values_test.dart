@@ -32,7 +32,12 @@ void main() {
     rt('timestampValue', '{"timestampValue":"2026-06-07T12:34:56.000000Z"}');
     rt('stringValue', '{"stringValue":"hello"}');
     rt('bytesValue', '{"bytesValue":"SGVsbG8="}');
-    rt('referenceValue', '{"referenceValue":"users/u1"}');
+    rt('docRefValue', '{"docRefValue":"users/u1"}');
+    rt('fileRefValue', '{"fileRefValue":"scans/a.png"}');
+    rt('userRefValue', '{"userRefValue":"u1"}');
+    test('referenceValue (before 1.0) reads as a document reference', () {
+      expect(Value.fromJson(jsonDecode('{"referenceValue":"users/u1"}')), const ReferenceValue('users/u1'));
+    });
     rt(
       'geoPointValue',
       '{"geoPointValue":{"latitude":59.913,"longitude":10.752}}',

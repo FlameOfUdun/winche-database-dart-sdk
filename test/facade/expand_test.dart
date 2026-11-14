@@ -4,12 +4,12 @@ import 'package:winche_database/winche_database.dart';
 
 import 'facade_harness.dart';
 
-Map<String, Object?> ref(String path) => {'referenceValue': path};
+Map<String, Object?> ref(String path) => {'docRefValue': path};
 
 class Patient {
-  Patient.fromMap(Map<String, Object?> m) : name = m['name'] as String, doctor = m['doctor'] as Link?;
+  Patient.fromMap(Map<String, Object?> m) : name = m['name'] as String, doctor = m['doctor'] as Link<Map<String, Object?>>?;
   final String name;
-  final Link? doctor;
+  final Link<Map<String, Object?>>? doctor;
   static final converter = Converter<Patient>(Patient.fromMap, (p) => {'name': p.name, 'doctor': p.doctor});
 }
 
@@ -17,10 +17,10 @@ class Visit {
   Visit.fromMap(Map<String, Object?> m)
       : note = m['note'] as String,
         patient = (m['patient'] as Link).withConverter(Patient.converter),
-        scan = Link.from(m['scan'], LinkKind.file);
+        scan = m['scan'] as Link<Map<String, Object?>>?;
   final String note;
   final Link<Patient> patient;
-  final Link? scan;
+  final Link<Map<String, Object?>>? scan;
   Map<String, Object?> toMap() => {'note': note, 'patient': patient, if (scan != null) 'scan': scan};
   static final converter = Converter<Visit>(Visit.fromMap, (v) => v.toMap());
 }
@@ -61,7 +61,7 @@ void main() {
     expect((patient.kind, patient.target), (LinkKind.document, 'patients/p1'));
     expect(patient.data()!['name'], 'Ann');
     expect((patient.data()!['doctor'] as Link).data()!['name'], 'Dr Who');
-    final team = (data['team'] as List).cast<Link>();
+    final team = (data['team'] as List).cast<Link<Map<String, Object?>>>();
     expect(team.map((l) => l.target), ['staff/a', 'staff/hidden']);
     expect(team[0].data()!['name'], 'A');
     expect(team[1].data(), isNull, reason: 'not readable (not included): no data, still a target');
@@ -88,7 +88,7 @@ void main() {
     await pump(20);   // the write goes out from the queue
     final write = h.requests.lastWhere((f) => f['type'] == 'write');
     final fields = ((write['writes'] as List).single as Map)['set']['fields'] as Map;
-    expect(fields['patient'], {'referenceValue': 'patients/p1'}, reason: 'the target, not the data');
+    expect(fields['patient'], {'docRefValue': 'patients/p1'}, reason: 'the target, not the data');
   });
 
   test('without expand, references are links without data', () async {
@@ -242,14 +242,15 @@ void main() {
 
   group('files and users', () {
     final withLinks = wireDoc('visits/v2', {
-      'scan': {'stringValue': 'scans/a.png'},
-      'other': {'stringValue': 'scans/hidden.png'},
+      'scan': {'fileRefValue': 'scans/a.png'},
+      'other': {'fileRefValue': 'scans/hidden.png'},
+      'label': {'stringValue': 'scans/a.png'},
       'patient': ref('patients/p2'),
     });
-    final patient2 = wireDoc('patients/p2', {'name': {'stringValue': 'Ann'}, 'author': {'stringValue': 'u1'}});
+    final patient2 = wireDoc('patients/p2', {'name': {'stringValue': 'Ann'}, 'author': {'userRefValue': 'u1'}});
     final scanRecord = {'path': 'scans/a.png', 'mimeType': 'image/png', 'sizeBytes': 42};
 
-    test('file: and user: fields are links when expanded, plain strings otherwise', () async {
+    test('file and user references are always links, with data when expanded', () async {
       h.handler = (f) {
         if (f['type'] == 'doc.get') {
           h.respond(f, {
@@ -258,7 +259,7 @@ void main() {
           });
         }
       };
-      final snap = await h.db.doc('visits/v2').expand(['file:scan', 'file:other', 'user:patient.author']).get();
+      final snap = await h.db.doc('visits/v2').expand(['scan', 'other', 'label', 'patient.author']).get();
       final data = snap.data()!;
       final scan = data['scan'] as Link;
       expect((scan.kind, scan.target, scan.data()!['sizeBytes']), (LinkKind.file, 'scans/a.png', 42));
@@ -267,9 +268,9 @@ void main() {
       expect((author.kind, author.data()!['displayName']), (LinkKind.user, 'Dr Lee'));
 
       final plain = await h.db.doc('visits/v2').expand(['patient']).get();
-      expect(plain.data()!['scan'], 'scans/a.png', reason: 'not expanded as file: a plain string');
-      expect(Link.from(plain.data()!['scan'], LinkKind.file)!.target, 'scans/a.png');
-      expect(Link.from(scan, LinkKind.file)!.data()!['sizeBytes'], 42);
+      expect(data['label'], 'scans/a.png', reason: 'a plain string is never a link');
+      final notExpanded = plain.data()!['scan'] as Link;
+      expect((notExpanded.kind, notExpanded.target, notExpanded.data()), (LinkKind.file, 'scans/a.png', null));
     });
 
     test('live: resolved values follow the server', () async {
@@ -277,7 +278,7 @@ void main() {
         if (f['type'] == 'doc.listen') h.respond(f, {'subscriptionId': 's'});
       };
       final snaps = <DocumentSnapshot<Map<String, Object?>>>[];
-      final sub = h.db.doc('visits/v2').expand(['file:scan']).snapshots().listen(snaps.add);
+      final sub = h.db.doc('visits/v2').expand(['scan']).snapshots().listen(snaps.add);
       await pump();
       h.push({
         'type': 'listen.snapshot', 'subscriptionId': 's', 'documents': [withLinks],
@@ -302,5 +303,20 @@ void main() {
       expect(size(), isNull);
       await sub.cancel();
     });
+  });
+
+  test('Link.document/file/user write typed references', () async {
+    h.handler = (f) {
+      if (f['type'] == 'write') h.respond(f, {'writeResults': [{'updateTime': '2026-06-08T10:00:00Z'}]});
+    };
+    unawaited(h.db.doc('notes/n1').set({
+      'visit': Link.document('/visits/v1'), 'scan': Link.file('scans/a.png'), 'by': Link.user('u9'),
+    }));
+    await pump(20);
+    final write = h.requests.lastWhere((f) => f['type'] == 'write');
+    final fields = ((write['writes'] as List).single as Map)['set']['fields'] as Map;
+    expect(fields['visit'], {'docRefValue': 'visits/v1'});
+    expect(fields['scan'], {'fileRefValue': 'scans/a.png'});
+    expect(fields['by'], {'userRefValue': 'u9'});
   });
 }

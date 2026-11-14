@@ -104,7 +104,7 @@ final class DocumentSnapshot<T> {
         _expand = expand,
         _resolved = resolved;
 
-  /// What kinded expand paths (`file:`, `user:`) stand for, by `kind:value`.
+  /// What expanded file and user references stand for, by `kind:value`.
   final Map<String, Map<String, Object?>>? _resolved;
 
   /// Referenced documents that came with this read (`expand`), by path.
@@ -154,10 +154,8 @@ final class DocumentSnapshot<T> {
   /// Returns the document data as a native map regardless of `T`,
   /// or null when [exists] is false.
   ///
-  /// A reference field is a [Link] (kind [LinkKind.document]): its `data()` is
-  /// the referenced document's fields when `expand` brought them. A `file:` or
-  /// `user:` field that was expanded is a [Link] too; not expanded, it's the
-  /// plain string it's stored as.
+  /// A reference field (to a document, a file or a user) is a [Link]: its
+  /// `data()` is what `expand` brought, when it did.
   Map<String, Object?>? nativeData() {
     if (!exists || rawData == null) return null;
     final paths = _expand ?? const <ExpandPath>[];
@@ -194,14 +192,14 @@ final class DocumentSnapshot<T> {
   /// The paths that go on under field [key].
   static List<ExpandPath> _below(List<ExpandPath> paths, String key) => [
         for (final p in paths)
-          if (p.segments.isNotEmpty && p.segments.first == key) (segments: p.segments.sublist(1), kind: p.kind)
+          if (p.segments.isNotEmpty && p.segments.first == key) (segments: p.segments.sublist(1))
       ];
 
-  /// [value] as native data, with references (and expanded files and users) as [Link]s; [paths] is what's left of
-  /// each expand path here.
+  /// [value] as native data, with references as [Link]s; [paths] is what's left of each expand path here.
   Object? _native(Value value, List<ExpandPath> paths) => switch (value) {
         ReferenceValue(:final path) => _documentLink(path, paths),
-        StringValue(:final value) => _kindedLink(value, paths) ?? value,
+        FileRefValue(:final path) => _resolvedLink(LinkKind.file, path, paths),
+        UserRefValue(:final uid) => _resolvedLink(LinkKind.user, uid, paths),
         ArrayValue(:final elements) => [for (final e in elements) _native(e, paths)],
         MapValue(:final fields) => {for (final e in fields.entries) e.key: _native(e.value, _below(paths, e.key))},
         _ => fromValue(value),
@@ -218,16 +216,11 @@ final class DocumentSnapshot<T> {
     return Link<Map<String, Object?>>._(LinkKind.document, target, doc, null, Converter._identity);
   }
 
-  /// A [Link] when an expand path of kind `file` / `user` ends here; null otherwise (the string stays a string).
-  Link<Map<String, Object?>>? _kindedLink(String value, List<ExpandPath> paths) {
-    for (final p in paths) {
-      if (p.segments.isNotEmpty) continue;
-      final kind = switch (p.kind) { 'file' => LinkKind.file, 'user' => LinkKind.user, _ => null };
-      if (kind != null) {
-        return Link<Map<String, Object?>>._(kind, value, null, _resolved?['${p.kind}:$value'], Converter._identity);
-      }
-    }
-    return null;
+  /// A file or user [Link], with what the server resolved when an expand path ends here.
+  Link<Map<String, Object?>> _resolvedLink(LinkKind kind, String target, List<ExpandPath> paths) {
+    final expanded = paths.any((p) => p.segments.isEmpty);
+    return Link<Map<String, Object?>>._(
+        kind, target, null, expanded ? (_resolved?['${kind.name}:$target']) : null, Converter._identity);
   }
 
   /// Creates a [DocumentSnapshot] from a [WireDocument].
@@ -331,28 +324,38 @@ class QuerySnapshot<T> {
 
 /// What a [Link] points at.
 enum LinkKind {
-  /// Another document (a reference field).
+  /// Another document (`docRefValue`).
   document,
 
-  /// A file in Winche Storage (a `file:` expand path).
+  /// A file in Winche Storage (`fileRefValue`).
   file,
 
-  /// A Winche Auth user (a `user:` expand path).
+  /// A Winche Auth user (`userRefValue`).
   user,
 }
 
-/// A field that points at something: a reference (always), or a file path or
-/// uid that `expand` followed (`file:scan`, `user:author`).
+/// A reference field: to a document, a file in Winche Storage, or a Winche
+/// Auth user. Store one with [Link.document], [Link.file] or [Link.user].
 ///
 /// [target] is always there: the document path, file path or uid. [data] is
 /// what `expand` brought (the referenced document's fields, the file's record,
 /// the user's public profile), and null when it didn't (not expanded, missing,
 /// hidden from this user, or not cached offline).
 ///
-/// Read-only: writing a [Link] stores its [target] (a reference for documents,
-/// the string for files and users), never its data.
+/// Read-only: writing a [Link] stores the reference, never its data.
 final class Link<T> {
   Link._(this.kind, this.target, this._doc, this._json, this._converter);
+
+  /// A reference to the document at [path], to write.
+  static Link<Map<String, Object?>> document(String path) =>
+      Link._(LinkKind.document, path.startsWith('/') ? path.substring(1) : path, null, null, Converter._identity);
+
+  /// A reference to the file at [path] in Winche Storage, to write.
+  static Link<Map<String, Object?>> file(String path) =>
+      Link._(LinkKind.file, path.startsWith('/') ? path.substring(1) : path, null, null, Converter._identity);
+
+  /// A reference to the Winche Auth user [uid], to write.
+  static Link<Map<String, Object?>> user(String uid) => Link._(LinkKind.user, uid, null, null, Converter._identity);
 
   /// What it points at.
   final LinkKind kind;
@@ -372,15 +375,6 @@ final class Link<T> {
 
   /// This link with its data read through [converter].
   Link<R> withConverter<R>(Converter<R> converter) => Link<R>._(kind, target, _doc, _json, converter);
-
-  /// [value] as a link of [kind]: a [Link] (from `data()`), or the plain string
-  /// a field holds when it wasn't expanded. Null when [value] is neither, so a
-  /// model's field can be a `Link` whether or not the read expanded it.
-  static Link<Map<String, Object?>>? from(Object? value, LinkKind kind) => switch (value) {
-        Link() => Link<Map<String, Object?>>._(value.kind, value.target, value._doc, value._json, Converter._identity),
-        String() => Link<Map<String, Object?>>._(kind, value, null, null, Converter._identity),
-        _ => null,
-      };
 
   @override
   bool operator ==(Object other) => other is Link && other.kind == kind && other.target == target;
