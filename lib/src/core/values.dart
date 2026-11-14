@@ -111,7 +111,6 @@ sealed class Value {
         return BytesValue(bytes);
 
       case 'docRefValue':
-      case 'referenceValue': // before 1.0
       case 'fileRefValue':
       case 'userRefValue':
         if (payload is! String) {
@@ -380,8 +379,7 @@ final class BytesValue extends Value {
   String toString() => 'BytesValue(${base64.encode(value)})';
 }
 
-/// `{"docRefValue": "collection/id"}`: a reference to a document, by path
-/// (`referenceValue`, from before 1.0, is read as this too).
+/// `{"docRefValue": "collection/id"}`: a reference to a document, by path.
 final class ReferenceValue extends Value {
   const ReferenceValue(this.path);
 

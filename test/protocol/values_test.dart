@@ -35,9 +35,6 @@ void main() {
     rt('docRefValue', '{"docRefValue":"users/u1"}');
     rt('fileRefValue', '{"fileRefValue":"scans/a.png"}');
     rt('userRefValue', '{"userRefValue":"u1"}');
-    test('referenceValue (before 1.0) reads as a document reference', () {
-      expect(Value.fromJson(jsonDecode('{"referenceValue":"users/u1"}')), const ReferenceValue('users/u1'));
-    });
     rt(
       'geoPointValue',
       '{"geoPointValue":{"latitude":59.913,"longitude":10.752}}',

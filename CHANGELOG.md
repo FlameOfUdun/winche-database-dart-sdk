@@ -16,7 +16,7 @@ public API are unchanged.
 deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseException`s.
 
 - **`settings`**, like every Winche package: `WincheDatabase.instance.settings = WincheDatabaseSettings(…)`. `config` and `WincheDatabaseConfig` remain, deprecated.
-- **Typed references:** document references are written as `docRefValue` (`referenceValue` is still read), and
+- **Typed references:** document references are `docRefValue` (was `referenceValue`), and
   there are file and user references (`fileRefValue`, `userRefValue`; `FileRefValue`, `UserRefValue`). Write them
   with `Link.document(path)`, `Link.file(path)`, `Link.user(uid)`. Needs a Winche.Database that knows the new tags.
 - **Expanding references:** reference fields read back as a `Link` (`kind`, `target`, `data()`), not a path string.
