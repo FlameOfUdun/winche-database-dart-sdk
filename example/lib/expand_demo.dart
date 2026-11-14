@@ -6,12 +6,20 @@ import 'package:winche_database/winche_database.dart';
 
 /// The Expand tab: a visit whose `patient` field references a patient, whose
 /// `doctor` field references a doctor, and whose `team` lists staff — one of
-/// them someone else's, which the rules don't let this user read.
+/// them someone else's, which the rules don't let this user read. The visit
+/// also links files (`scan`, `attachments`) and users (`author`, and the
+/// doctor's `account`, two references away).
 ///
-/// The visit is listened to with `expand(['patient.doctor', 'team'])`: expanded
-/// references arrive as the referenced documents (green), the rest stay paths
-/// (grey). Changing a referenced document — even two references away — makes
-/// the listener emit again, though the visit itself never changed.
+/// The visit is listened to with `expand([...])`: expanded documents arrive as
+/// green cards, files blue, users purple, and links without data (not
+/// expanded, missing, or hidden) grey chips with their target. Changing a
+/// referenced document, even two references away, makes the listener emit
+/// again, though the visit itself never changed.
+///
+/// The sample server resolves files and users from a fixed list (it has no
+/// Winche.Storage or Winche Auth): `scans/chest-xray.png` and `scans/ecg.pdf`
+/// exist, `private/notes.txt` is hidden from everyone, and alice and bob have
+/// profiles.
 class ExpandDemo extends StatefulWidget {
   const ExpandDemo({super.key, required this.db, required this.uid, required this.otherUid});
 
@@ -26,7 +34,7 @@ class ExpandDemo extends StatefulWidget {
 }
 
 class _ExpandDemoState extends State<ExpandDemo> {
-  static const _paths = ['patient.doctor', 'team'];
+  static const _paths = ['patient.doctor.account', 'team', 'scan', 'attachments', 'author'];
   static final _rng = Random();
 
   bool _expand = true;
@@ -72,13 +80,16 @@ class _ExpandDemoState extends State<ExpandDemo> {
   }
 
   Future<void> _seed() => _run(() async {
-        await _doctor.set({'name': 'Dr Grey', 'specialty': 'Cardiology'});
+        await _doctor.set(_doctorData);
         await _patient.set({'name': 'Ann Lee', 'born': 1980, 'doctor': _doctor});
         await _nurse.set({'name': 'Nurse Joy'});
         await _visit.set({
           'reason': 'Check-up',
           'patient': _patient,
           'team': [_nurse, _theirs],
+          'scan': Link.file('scans/chest-xray.png'),
+          'attachments': [Link.file('scans/ecg.pdf'), Link.file('private/notes.txt'), Link.file('scans/missing.png')],
+          'author': Link.user(widget.uid),
         });
       });
 
@@ -87,7 +98,10 @@ class _ExpandDemoState extends State<ExpandDemo> {
   Future<void> _renamePatient() =>
       _run(() => _patient.update({'name': '${['Ann', 'Annie', 'Anna'][_rng.nextInt(3)]} Lee'}));
   Future<void> _deleteDoctor() => _run(() => _doctor.delete());
-  Future<void> _restoreDoctor() => _run(() => _doctor.set({'name': 'Dr Grey', 'specialty': 'Cardiology'}));
+  Future<void> _restoreDoctor() => _run(() => _doctor.set(_doctorData));
+
+  /// The doctor has an account: someone else's profile, which signed-in users may see.
+  Map<String, Object?> get _doctorData => {'name': 'Dr Grey', 'specialty': 'Cardiology', 'account': Link.user(widget.otherUid)};
 
   @override
   Widget build(BuildContext context) {
@@ -97,8 +111,9 @@ class _ExpandDemoState extends State<ExpandDemo> {
         Text('Expanding references', style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 4),
         Text(
-          "visits/demo → patient → doctor, and a team with your nurse and ${widget.otherUid}'s "
-          "(which the rules hide from you). Listened to with expand(${_paths.join(', ')}).",
+          "visits/demo → patient → doctor → account, a team with your nurse and ${widget.otherUid}'s "
+          "(which the rules hide from you), files (one missing, one hidden) and its author. "
+          "Listened to with expand(${_paths.join(', ')}).",
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 12),
@@ -141,32 +156,41 @@ class _ExpandDemoState extends State<ExpandDemo> {
   }
 }
 
-/// A document's fields: links with data (expanded) are nested green cards, links without (not expanded, or hidden
-/// by the rules) grey chips with their target.
+/// How each kind of link looks: documents green, files blue, users purple.
+({MaterialColor color, IconData icon, String label}) _look(LinkKind kind) => switch (kind) {
+      LinkKind.document => (color: Colors.green, icon: Icons.link, label: 'document'),
+      LinkKind.file => (color: Colors.blue, icon: Icons.attach_file, label: 'file'),
+      LinkKind.user => (color: Colors.purple, icon: Icons.person, label: 'user'),
+    };
+
+/// A document's fields (or a file's record, a user's profile): links with data (expanded) are nested cards coloured
+/// by kind, links without (not expanded, missing, or hidden by the rules) grey chips with their target.
 class _DocCard extends StatelessWidget {
-  const _DocCard({required this.title, required this.data, required this.depth});
+  const _DocCard({required this.title, required this.data, required this.depth, this.kind = LinkKind.document});
 
   final String title;
   final Map<String, Object?> data;
   final int depth;
+  final LinkKind kind;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final look = _look(kind);
     return Card(
-      color: depth == 0 ? null : Colors.green.withValues(alpha: 0.08),
+      color: depth == 0 ? null : look.color.withValues(alpha: 0.08),
       shape: RoundedRectangleBorder(
-        side: BorderSide(color: depth == 0 ? colors.outlineVariant : Colors.green.shade400),
+        side: BorderSide(color: depth == 0 ? colors.outlineVariant : look.color.shade400),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(depth == 0 ? Icons.description : Icons.link, size: 16, color: depth == 0 ? null : Colors.green.shade700),
+            Icon(depth == 0 ? Icons.description : look.icon, size: 16, color: depth == 0 ? null : look.color.shade700),
             const SizedBox(width: 6),
             Expanded(child: Text(title, style: Theme.of(context).textTheme.labelLarge)),
-            if (depth > 0) Text('expanded', style: TextStyle(color: Colors.green.shade700, fontSize: 12)),
+            if (depth > 0) Text('${look.label} · expanded', style: TextStyle(color: look.color.shade700, fontSize: 12)),
           ]),
           const Divider(),
           for (final e in data.entries)
@@ -184,12 +208,12 @@ class _DocCard extends StatelessWidget {
 
   Widget _value(Object? value) => switch (value) {
         Link link => switch (link.data()) {
-            final linked? => _DocCard(title: link.target, data: linked, depth: depth + 1),
+            final linked? => _DocCard(title: link.target, data: linked, depth: depth + 1, kind: link.kind),
             null => Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Chip(
-                  avatar: const Icon(Icons.link_off, size: 16),
-                  label: Text(link.target),
+                  avatar: Icon(link.kind == LinkKind.document ? Icons.link_off : _look(link.kind).icon, size: 16),
+                  label: Text('${link.kind == LinkKind.document ? '' : '${_look(link.kind).label}: '}${link.target}'),
                   visualDensity: VisualDensity.compact,
                   backgroundColor: Colors.grey.withValues(alpha: 0.12),
                 ),
