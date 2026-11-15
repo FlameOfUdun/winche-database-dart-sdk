@@ -18,7 +18,7 @@ void main() {
       // `LazyLocalStore`, and the contract never issues a read or write, so
       // the directory is never touched and nothing hits disk.
       options: WincheOptions(
-        databaseEndpoint: Uri.parse('ws://localhost:1/ws'),
+        endpoints: {'database': Uri.parse('ws://localhost:1/ws')},
         directoryResolver: () async => '/winche-contract-test',
       ),
     );

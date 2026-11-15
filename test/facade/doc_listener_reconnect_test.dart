@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../support/wire_error.dart';
 
 import 'package:test/test.dart';
 import 'package:winche_core/winche_core.dart';
@@ -17,7 +18,7 @@ class DocReconnectHarness {
     db = WincheDatabase(WincheApp('doc-listener-reconnect'))
       ..debugBindStore(
         ConnectionConfig(
-          uri: Uri.parse('ws://fake/documents/ws'),
+          uri: Uri.parse('ws://fake/documents/v1/ws'),
           channelFactory: (_) => _dial(),
           sleeper: (d) {
             sleeps.add(d);
@@ -67,8 +68,7 @@ class DocReconnectHarness {
   ) => c.serverSend({
     'type': 'error',
     'id': frame['id'],
-    'status': status,
-    'message': message,
+    'error': wireError(status, message),
   });
 
   /// Client request frames captured on [channel], excluding `hello`.

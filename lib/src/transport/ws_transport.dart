@@ -21,6 +21,9 @@ final class WsTransport implements Transport {
   @override
   ConnectionState get connectionState => _states.value;
 
+  /// The server's expand limit, once it said (see [ProtocolConnection.expandLimit]).
+  int? get expandLimit => _connection?.expandLimit;
+
   @override
   Stream<ServerFrame> listenEvents(String subscriptionId) async* {
     final connection = await _ensureConnected();
@@ -42,7 +45,7 @@ final class WsTransport implements Transport {
   ///
   /// This resolves to the connection *object*, which may not be `ready` — a
   /// failed dial leaves it retrying rather than discarded. That is safe because
-  /// [request] fails fast with [UnavailableException] on any non-ready state,
+  /// [request] fails fast with a [WincheDatabaseException] with code `unavailable` on any non-ready state,
   /// so callers still see the failure immediately.
   ///
   /// The connection recovers itself in place via its own retry loop
@@ -51,7 +54,7 @@ final class WsTransport implements Transport {
   Future<ProtocolConnection> _ensureConnected() {
     if (_disposed) {
       return Future.error(
-          const UnavailableException('Transport has been disposed.'));
+          WincheDatabaseException.of(WincheErrorCode.unavailable, 'Transport has been disposed.'));
     }
     final inFlight = _connectFuture;
     if (inFlight != null) return inFlight;
@@ -98,7 +101,7 @@ final class WsTransport implements Transport {
   @override
   Future<void> reconnect() async {
     if (_disposed) {
-      throw const UnavailableException('Transport has been disposed.');
+      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Transport has been disposed.');
     }
     final existing = _connection;
     if (existing == null ||

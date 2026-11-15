@@ -26,7 +26,7 @@ void main() {
     var dials = 0;
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       pingInterval: const Duration(hours: 1),
       sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
       channelFactory: (_) {
@@ -66,7 +66,7 @@ void main() {
     late FakeChannel channel;
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       pingInterval: const Duration(hours: 1),
       sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
       channelFactory: (_) {
@@ -99,7 +99,7 @@ void main() {
 
   test('closing during backoff terminates promptly', () async {
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       pingInterval: const Duration(hours: 1),
       // A long backoff: the test would time out if close() waited it out.
       maxBackoff: const Duration(seconds: 30),
@@ -120,7 +120,7 @@ void main() {
 
   test('closing while retrying does not resurrect the connection', () async {
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       pingInterval: const Duration(hours: 1),
       sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
       channelFactory: (_) => throw Exception('refused'),

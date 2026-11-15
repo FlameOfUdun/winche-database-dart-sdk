@@ -32,7 +32,7 @@ void main() {
   WincheDatabase offlineDb(LocalStore store) =>
       WincheDatabase(WincheApp('offline-write'))..debugBindStore(
         ConnectionConfig(
-          uri: Uri.parse('ws://localhost:1/documents/ws'),
+          uri: Uri.parse('ws://localhost:1/documents/v1/ws'),
           // Reconnection is unconditional; without a small real backoff the
           // always-failing dial would retry on the default (up-to-30s) delay.
           sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),

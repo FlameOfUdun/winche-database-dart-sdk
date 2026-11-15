@@ -5,10 +5,14 @@ part of '../../winche_database.dart';
 /// IndexedDB and needs no file-system path.
 const bool _kIsWeb = identical(0, 0.0);
 
+/// The old name of [WincheDatabaseSettings].
+@Deprecated('Use WincheDatabaseSettings. Removed in the next major version.')
+typedef WincheDatabaseConfig = WincheDatabaseSettings;
+
 /// All configuration for a [WincheDatabase] in one object — connection knobs,
 /// local-store selection, and sync policy. Mirrors `winche_storage`'s
 /// `WincheStorageConfig`.
-final class WincheDatabaseConfig {
+final class WincheDatabaseSettings {
   /// Keep-alive ping interval. Defaults to 30 seconds. A socket that receives
   /// nothing for two intervals (plus 15 seconds) is treated as dead and replaced.
   final Duration pingInterval;
@@ -42,7 +46,16 @@ final class WincheDatabaseConfig {
   /// triggers eviction).
   final int? cacheSizeBytes;
 
-  const WincheDatabaseConfig({
+  /// Use the database while nobody is signed in (default false): requests go
+  /// without a token, and the server's rules decide what a signed-out caller
+  /// may read or write (`request.auth == null`). For public data — a
+  /// catalogue, a feed — or an app with no sign-in at all.
+  ///
+  /// The signed-out session keeps its cache in memory only, and ends when
+  /// someone signs in: its streams complete, as on any user switch.
+  final bool allowSignedOut;
+
+  const WincheDatabaseSettings({
     this.pingInterval = const Duration(seconds: 30),
     this.requestTimeout = const Duration(seconds: 60),
     this.maxBackoff = const Duration(seconds: 30),
@@ -51,6 +64,7 @@ final class WincheDatabaseConfig {
     this.conflictPolicy = ConflictPolicy.manual,
     this.maxCachedDocuments,
     this.cacheSizeBytes,
+    this.allowSignedOut = false,
   });
 }
 
@@ -92,7 +106,7 @@ String webDatabaseNameFor(WincheIdentity identity) =>
 ///
 /// NOTE: a persistent (sembast) database must be owned by a single isolate. Do
 /// not open the same on-disk database from multiple isolates concurrently.
-final class WincheDatabase extends WincheDatabaseService {
+final class WincheDatabase extends WincheService implements WincheSessionConsumer {
   /// Creates the database and registers it with [app].
   ///
   /// Prefer [instance]; construct directly only to attach to a non-default app.
@@ -105,6 +119,15 @@ final class WincheDatabase extends WincheDatabaseService {
   static WincheDatabase instanceFor(WincheApp app) =>
       WincheService.instanceFor(app, () => WincheDatabase(app));
 
+  /// The service's id in `WincheOptions.endpoints`.
+  static const serviceId = 'database';
+
+  /// Its WebSocket endpoint: `/documents/v1/ws` under `WincheOptions.baseUrl`
+  /// (`wss` for `https`), or `WincheOptions.endpoints['database']`. Throws a
+  /// [StateError] saying what to set when neither is configured.
+  Uri get _endpoint => (app.options ?? const WincheOptions())
+      .endpointFor(serviceId, path: '/documents/v1/ws', webSocket: true);
+
   _DatabaseSession? _session;
 
   /// The current session, or null when unbound. For tests and the core
@@ -116,26 +139,33 @@ final class WincheDatabase extends WincheDatabaseService {
   /// one) was established — i.e. whether this facade has actually been used.
   bool _started = false;
 
-  WincheDatabaseConfig _config = const WincheDatabaseConfig();
+  WincheDatabaseSettings _config = const WincheDatabaseSettings();
 
   /// Tuning for the sessions this facade builds.
-  WincheDatabaseConfig get config => _config;
+  WincheDatabaseSettings get settings => _config;
 
   /// Throws a [StateError] once the current session has started — opened its
   /// store or dialled its socket.
   ///
   /// Construction is lazy, so a session core bound synchronously during
   /// `WincheDatabase.instance` has not started yet. That window is what lets
-  /// `instance.config = ...` work on the line after `.instance`.
-  set config(WincheDatabaseConfig value) {
+  /// `instance.settings = ...` work on the line after `.instance`.
+  set settings(WincheDatabaseSettings value) {
     if (_started) {
       throw StateError(
-        'WincheDatabase.config cannot be changed once the database has been '
+        'WincheDatabase.settings cannot be changed once the database has been '
         'used. Set it immediately after first obtaining the instance.',
       );
     }
     _config = value;
   }
+
+  /// The old name of [settings].
+  @Deprecated('Use settings. Removed in the next major version.')
+  WincheDatabaseSettings get config => settings;
+
+  @Deprecated('Use settings. Removed in the next major version.')
+  set config(WincheDatabaseSettings value) => settings = value;
 
   final _connectionRelay = StatusRelay<ConnectionState>(
     ConnectionState.disconnected,
@@ -149,11 +179,16 @@ final class WincheDatabase extends WincheDatabaseService {
       return;
     }
 
-    final endpoint = app.options?.databaseEndpoint;
-    if (endpoint == null) {
-      throw StateError(
-        'WincheOptions.databaseEndpoint is required to use winche_database.',
-      );
+    final Uri endpoint;
+    final LocalStore store;
+    try {
+      endpoint = _endpoint;
+      store = _storeFor(session);
+    } catch (_) {
+      // Whatever was bound — a previous user's session, or a signed-out one —
+      // must not stay bound under the new identity.
+      await _clearSession()?.dispose();
+      rethrow;
     }
 
     await _bind(
@@ -162,7 +197,7 @@ final class WincheDatabase extends WincheDatabaseService {
         tokenProvider: () async {
           final token = await session.token();
           if (token == null) {
-            throw const UnauthenticatedException(
+            throw WincheDatabaseException.of(WincheErrorCode.unauthenticated, 
               'No auth token available for the current session.',
             );
           }
@@ -173,7 +208,7 @@ final class WincheDatabase extends WincheDatabaseService {
         maxBackoff: _config.maxBackoff,
         maxFrameBytes: _config.maxFrameBytes,
       ),
-      _storeFor(session),
+      store,
       _config.conflictPolicy,
       maxCachedDocuments: _config.maxCachedDocuments,
       cacheSizeBytes: _config.cacheSizeBytes,
@@ -300,10 +335,34 @@ final class WincheDatabase extends WincheDatabaseService {
   /// signs in, and reading that chip must not lock [config] or throw
   /// [WincheUnboundException].
   _DatabaseSession _require() {
-    final session = _session;
+    final session = _currentSession();
     if (session == null) throw WincheUnboundException();
     _started = true;
     return session;
+  }
+
+  /// The bound session; or, with [WincheDatabaseSettings.allowSignedOut] and
+  /// nobody signed in, a signed-out one bound now — no token, memory-only
+  /// cache. Null when there's neither.
+  _DatabaseSession? _currentSession() {
+    final session = _session;
+    if (session != null || !_config.allowSignedOut || isDisposed) return session;
+    final endpoint = _endpoint;
+    // No previous session, so _bind completes synchronously and _session is set on return.
+    unawaited(_bind(
+      ConnectionConfig(
+        uri: endpoint,
+        pingInterval: _config.pingInterval,
+        requestTimeout: _config.requestTimeout,
+        maxBackoff: _config.maxBackoff,
+        maxFrameBytes: _config.maxFrameBytes,
+      ),
+      MemoryLocalStore(),
+      _config.conflictPolicy,
+      maxCachedDocuments: _config.maxCachedDocuments,
+      cacheSizeBytes: _config.cacheSizeBytes,
+    ));
+    return _session;
   }
 
   /// Builds the local store for [session] according to [_config].
@@ -452,18 +511,19 @@ final class WincheDatabase extends WincheDatabaseService {
       T result;
       try {
         result = await handler(tx);
-      } on AbortedException {
-        // AbortedException from the handler (e.g. tx.get/tx.query conflict) —
-        // retry with a fresh begin under the same maxAttempts/backoff policy (I6).
-        // No rollback needed: the server has already aborted the transaction.
-        if (attempt < maxAttempts - 1) {
-          await Future<void>.delayed(
-            linearBackoff(attempt, stepMs: 50, jitterMs: 50, rng: rng),
-          );
-          continue;
-        }
-        rethrow;
       } catch (e) {
+        if (_isAborted(e)) {
+          // An aborted from the handler (e.g. tx.get/tx.query conflict) —
+          // retry with a fresh begin under the same maxAttempts/backoff policy (I6).
+          // No rollback needed: the server has already aborted the transaction.
+          if (attempt < maxAttempts - 1) {
+            await Future<void>.delayed(
+              linearBackoff(attempt, stepMs: 50, jitterMs: 50, rng: rng),
+            );
+            continue;
+          }
+          rethrow;
+        }
         // Any other handler exception — roll back and rethrow.
         try {
           await tx._rollback();
@@ -482,7 +542,8 @@ final class WincheDatabase extends WincheDatabaseService {
       try {
         await tx._commit();
         return result;
-      } on AbortedException {
+      } catch (e) {
+        if (!_isAborted(e)) rethrow;
         // Conflict — retry with backoff.
         if (attempt < maxAttempts - 1) {
           await Future<void>.delayed(
@@ -495,6 +556,8 @@ final class WincheDatabase extends WincheDatabaseService {
     }
     throw StateError('Transaction failed after $maxAttempts attempts.');
   }
+
+  static bool _isAborted(Object e) => e is WincheDatabaseException && e.code == WincheErrorCode.aborted;
 
   /// Returns a new [WriteBatch] for atomic multi-document writes.
   WriteBatch batch() {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:winche_core/winche_core.dart';
 
 import '../protocol/connection.dart';
 import '../protocol/exceptions.dart';
@@ -52,10 +53,9 @@ class SyncController {
   /// write, so it stays queued and is retried ([SyncRetrying]). A replay carries
   /// the write's version precondition, so one that did apply comes back as a
   /// conflict rather than applying twice.
-  static const _permanentStatuses = {
-    'PERMISSION_DENIED',
-    'INVALID_ARGUMENT',
-    'INVALID_QUERY',
+  static const _permanentCodes = {
+    WincheErrorCode.permissionDenied,
+    WincheErrorCode.invalidArgument, // a malformed write, or an invalid query
   };
 
   final Transport _transport;
@@ -195,19 +195,21 @@ class SyncController {
     final Map<String, Object?> result;
     try {
       result = await _transport.request(frame);
-    } on UnavailableException {
-      return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
-    } on UnauthenticatedException catch (e) {
-      // Not a verdict on this write — we simply are not authenticated right now,
-      // and every following unit would fail identically. Keep the whole queue
-      // intact and stop, exactly as if we were offline. The next reconnect (or
-      // core's onTokenChanged after a token rotation) resumes
-      // the drain from here.
-      _emitAuthStall(unit, e);
-      return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
-    } on WincheProtocolException catch (e) {
-      if (!_conflictStatuses.contains(e.status) &&
-          !_permanentStatuses.contains(e.status)) {
+    } on WincheDatabaseException catch (e) {
+      if (e.code == WincheErrorCode.unavailable) {
+        return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
+      }
+      if (e.code == WincheErrorCode.unauthenticated) {
+        // Not a verdict on this write — we simply are not authenticated right
+        // now, and every following unit would fail identically. Keep the whole
+        // queue intact and stop, exactly as if we were offline. The next
+        // reconnect (or core's onTokenChanged after a token rotation) resumes
+        // the drain from here.
+        _emitAuthStall(unit, e);
+        return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
+      }
+      if (!_conflictCodes.contains(e.code) &&
+          !_permanentCodes.contains(e.code)) {
         _transientRetry(unit, e);
         return (outcome: _DrainOutcome.halted, rebases: const <String, String>{});
       }
@@ -316,15 +318,15 @@ class SyncController {
     return null;
   }
 
-  static const _conflictStatuses = {
-    'FAILED_PRECONDITION',
-    'ALREADY_EXISTS',
-    'NOT_FOUND',
+  static const _conflictCodes = {
+    WincheErrorCode.failedPrecondition,
+    WincheErrorCode.alreadyExists,
+    WincheErrorCode.notFound,
   };
 
   /// Keeps the whole queue (order matters) and drains again after a backoff —
   /// the connection is still up, so no reconnect would trigger it.
-  void _transientRetry(List<PendingWrite> unit, WincheProtocolException e) {
+  void _transientRetry(List<PendingWrite> unit, WincheDatabaseException e) {
     if (_disposed) return;
     _retryAttempts++;
     final delay = _retryDelay(_retryAttempts);
@@ -342,15 +344,15 @@ class SyncController {
   }
 
   /// Reports the queue as stalled on authentication, once per stall.
-  void _emitAuthStall(List<PendingWrite> unit, UnauthenticatedException e) {
+  void _emitAuthStall(List<PendingWrite> unit, WincheDatabaseException e) {
     if (_authStalled) return;
     _authStalled = true;
     _emit(SyncPaused(paths: [for (final p in unit) p.path], error: e));
   }
 
   Future<void> _handleError(
-      List<PendingWrite> unit, String key, WincheProtocolException e) async {
-    if (_conflictStatuses.contains(e.status)) {
+      List<PendingWrite> unit, String key, WincheDatabaseException e) async {
+    if (_conflictCodes.contains(e.code)) {
       await _onConflict(unit, key, e);
     } else {
       _autoResolveAttempts.remove(unit.first.seq);
@@ -363,7 +365,7 @@ class SyncController {
 
   /// Drops [unit] from the caller's bookkeeping and reports it, carrying the
   /// entries themselves so the app can recover work the queue no longer holds.
-  void _emitFailed(List<PendingWrite> unit, WincheProtocolException e) {
+  void _emitFailed(List<PendingWrite> unit, WincheDatabaseException e) {
     _emit(WriteFailed(
       paths: [for (final p in unit) p.path],
       error: e,
@@ -373,7 +375,7 @@ class SyncController {
   }
 
   Future<void> _onConflict(
-      List<PendingWrite> unit, String key, WincheProtocolException e) async {
+      List<PendingWrite> unit, String key, WincheDatabaseException e) async {
     if (_policy != ConflictPolicy.manual) {
       final seq = unit.first.seq;
       final attempts = (_autoResolveAttempts[seq] ?? 0) + 1;
@@ -426,7 +428,7 @@ class SyncController {
     try {
       final r = await _transport.request(docGetFrame('', path));
       return WireDocument.fromAny(r['document']);
-    } on WincheProtocolException {
+    } on WincheDatabaseException {
       return null;
     }
   }

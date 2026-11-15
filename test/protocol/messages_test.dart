@@ -1,4 +1,6 @@
 import 'package:test/test.dart';
+import 'package:winche_core/winche_core.dart';
+import '../support/wire_error.dart';
 import 'package:winche_database/src/protocol/exceptions.dart';
 import 'package:winche_database/src/protocol/messages.dart';
 import 'package:winche_database/src/core/values.dart';
@@ -162,21 +164,19 @@ void main() {
       final frame = ServerFrame.parse({
         'type': 'error',
         'id': 'req-42',
-        'status': 'NOT_FOUND',
-        'message': "Document 'users/u99' does not exist.",
-        'details': null,
+        'error': wireError('NOT_FOUND', "Document 'users/u99' does not exist.", null),
       });
       expect(frame, isA<ErrorFrame>());
       final err = frame as ErrorFrame;
       expect(err.id, equals('req-42'));
-      expect(err.status, equals('NOT_FOUND'));
+      expect(err.error['code'], equals('not-found'));
+      expect(err.toException().code, WincheErrorCode.notFound);
     });
 
     test('error frame without id (handshake error)', () {
       final frame = ServerFrame.parse({
         'type': 'error',
-        'status': 'UNAUTHENTICATED',
-        'message': 'Token rejected.',
+        'error': wireError('UNAUTHENTICATED', 'Token rejected.'),
       });
       expect(frame, isA<ErrorFrame>());
       expect((frame as ErrorFrame).id, isNull);
@@ -263,13 +263,12 @@ void main() {
       );
     });
 
-    test('I4 — error frame with missing message throws FormatException', () {
+    test('I4 — error frame with no error object throws FormatException', () {
       expect(
         () => ServerFrame.parse({
           'type': 'error',
           'id': 'req-1',
-          'status': 'NOT_FOUND',
-          // 'message' is missing
+          // 'error' is missing
         }),
         throwsFormatException,
       );
@@ -443,7 +442,7 @@ void main() {
         'orderBy field missing',
         {'code': 'ORDERBY_FIELD_NOT_FILTERED'},
       );
-      expect((ex as InvalidQueryException).code,
+      expect((ex as InvalidQueryException).validationCode,
           equals('ORDERBY_FIELD_NOT_FILTERED'));
     });
 
@@ -492,11 +491,7 @@ void main() {
   // ErrorFrame.toException
   // ---------------------------------------------------------------------------
   test('ErrorFrame.toException maps to correct subclass', () {
-    final frame = ErrorFrame(
-      id: 't4',
-      status: 'ABORTED',
-      message: 'Transaction conflict.',
-    );
+    final frame = ErrorFrame(id: 't4', error: wireError('ABORTED', 'Transaction conflict.'));
     expect(frame.toException(), isA<AbortedException>());
   });
 }

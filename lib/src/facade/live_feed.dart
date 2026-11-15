@@ -12,7 +12,15 @@ class _FeedUpdate {
     this.deletedPaths = const <String>{},
     this.currentOnly = false,
     this.tombstoneOnly = false,
+    this.included,
+    this.resolved,
   });
+
+  /// With `expand`: the referenced documents the server has sent, by path.
+  final Map<String, WireDocument>? included;
+
+  /// With kinded `expand` paths: what the server resolved them to, by `kind:value`.
+  final Map<String, Map<String, Object?>>? resolved;
   final List<WireDocument> docs;
   final Set<String> deletedPaths;
   final bool currentOnly;
@@ -34,10 +42,41 @@ class _FeedUpdate {
 /// per-type frame handling ([_handleFrame], publishing via [_publish]).
 /// Consumed by the matching [_LiveListener].
 abstract class _LiveFeed {
-  _LiveFeed(this._db, this._session);
+  _LiveFeed(this._db, this._session, [this._expand]);
 
   final WincheDatabase _db;
   final _DatabaseSession _session;
+
+  /// Reference fields the server follows (PROTOCOL §7.7), and what it has sent.
+  final List<String>? _expand;
+  Map<String, WireDocument>? _included;
+  Map<String, Map<String, Object?>>? _resolved;
+
+  /// Applies a frame's `included` / `excluded`: a snapshot replaces the set, a delta updates it.
+  void _applyIncluded(ServerFrame frame) {
+    if (_expand == null) return;
+    switch (frame) {
+      case ListenSnapshotFrame(:final included, :final resolved):
+        _included = {...?included};
+        _resolved = {...?resolved};
+      case ListenDeltaFrame(:final included, :final excluded, :final resolved, :final unresolved):
+        final next = {...?_included, ...?included};
+        for (final p in excluded) {
+          next.remove(p);
+        }
+        _included = next;
+        final values = {...?_resolved, ...?resolved};
+        for (final k in unresolved) {
+          values.remove(k);
+        }
+        _resolved = values;
+      default:
+        break;
+    }
+  }
+
+  /// Key suffix so an expanded subscription's resume token isn't shared with a plain one.
+  String get _expandKey => _expand == null || _expand.isEmpty ? '' : '|expand:${_expand.join(',')}';
 
   final StreamController<_FeedUpdate?> _out =
       StreamController<_FeedUpdate?>.broadcast();
@@ -56,11 +95,10 @@ abstract class _LiveFeed {
   /// Error statuses that stop all future (re)subscription and surface once on
   /// the stream. Both variants share the set: a `doc.listen` never produces
   /// `INVALID_QUERY`, so including it is harmless.
-  static const _permanentStatuses = {
-    'INVALID_QUERY',
-    'INVALID_ARGUMENT',
-    'PERMISSION_DENIED',
-    'UNAUTHENTICATED',
+  static const _permanentCodes = {
+    WincheErrorCode.invalidArgument,   // an invalid query among them
+    WincheErrorCode.permissionDenied,
+    WincheErrorCode.unauthenticated,
   };
 
   // ── Hooks ──────────────────────────────────────────────────────────────────
@@ -88,7 +126,9 @@ abstract class _LiveFeed {
     _active = true;
     if (!_out.isClosed) {
       _out.add(_FeedUpdate(
-          docs: List.unmodifiable(docs), deletedPaths: deletedPaths));
+          docs: List.unmodifiable(docs), deletedPaths: deletedPaths,
+          included: _included == null ? null : Map.unmodifiable(_included!),
+          resolved: _resolved == null ? null : Map.unmodifiable(_resolved!)));
     }
   }
 
@@ -97,6 +137,7 @@ abstract class _LiveFeed {
       _onCurrent(frame);
       return;
     }
+    _applyIncluded(frame); // before publishing, so the update carries them
     _handleFrame(frame); // updates _resumeToken from snapshot/delta
     _persistResumeToken();
   }
@@ -168,8 +209,8 @@ abstract class _LiveFeed {
       _frames = _session.transport
           .listenEvents(subId)
           .listen(_onFrame, onError: (_) => _goDown(), onDone: _goDown);
-    } on WincheProtocolException catch (e) {
-      if (_permanentStatuses.contains(e.status)) {
+    } on WincheDatabaseException catch (e) {
+      if (_permanentCodes.contains(e.code)) {
         _permanent = true;
         if (!_out.isClosed) _out.addError(e);
       } else {
@@ -216,19 +257,21 @@ abstract class _LiveFeed {
 /// server order, applying snapshots and deltas (with index math and a
 /// count-mismatch checksum that triggers a fresh resubscribe).
 final class _QueryFeed extends _LiveFeed {
-  _QueryFeed(super._db, super._session, this._spec);
+  _QueryFeed(super._db, super._session, this._spec, [super._expand]);
 
   final QuerySpec _spec;
 
   @override
-  String get _subscriptionKey => TargetCache.keyOf(_spec);
+  String get _subscriptionKey => TargetCache.keyOf(_spec) + _expandKey;
 
   /// The current server-authoritative document set (server order).
   List<WireDocument> _docs = [];
 
   @override
   Map<String, Object?> _subscribeFrame(int? resumeToken) =>
-      listenFrame('', _spec, resumeToken: resumeToken);
+      // An expanded subscription always starts over (the server would anyway): its referenced documents may have
+      // changed while away, and a resume ("you're current") would keep the old ones.
+      listenFrame('', _spec, resumeToken: _expand == null ? resumeToken : null, expand: _expand);
 
   @override
   void _handleFrame(ServerFrame frame) {
@@ -297,18 +340,18 @@ final class _QueryFeed extends _LiveFeed {
 /// (or clears it on removal); no ordering, index math, or count-mismatch
 /// resubscription is needed.
 final class _DocumentFeed extends _LiveFeed {
-  _DocumentFeed(super._db, super._session, this._path);
+  _DocumentFeed(super._db, super._session, this._path, [super._expand]);
 
   final String _path;
 
   @override
-  String get _subscriptionKey => 'doc:$_path';
+  String get _subscriptionKey => 'doc:$_path$_expandKey';
 
   WireDocument? _doc;
 
   @override
   Map<String, Object?> _subscribeFrame(int? resumeToken) =>
-      docListenFrame('', _path, resumeToken: resumeToken);
+      docListenFrame('', _path, resumeToken: _expand == null ? resumeToken : null, expand: _expand);
 
   @override
   void _handleFrame(ServerFrame frame) {

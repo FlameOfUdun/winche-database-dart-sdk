@@ -1,5 +1,44 @@
 # Changelog
 
+## 8.0.0
+
+On `winche_core` 1.0. Also contains 7.3.0, which was not released.
+
+**Breaking:** needs `winche_core` 1.0. The live endpoint is `/documents/v1/ws` under `WincheOptions.baseUrl` (`wss`
+for `https`), or `WincheOptions.endpoints['database']`; the server side moved to `/documents/v1` in Winche.Database.
+`WincheDatabase` is a plain `WincheService` that follows the session. The WebSocket transport, offline store and
+public API are unchanged.
+
+**Errors:** `WincheDatabaseException` replaces `WincheProtocolException`: a `WincheException` with the shared `code`
+(`WincheErrorCode`), `reason` (`invalid-query`) and `details`, read from the new error frame
+`{type: "error", id, error: {code, message, reason?, details?}}`. `WincheProtocolException`, the per-kind subclasses
+(still thrown for this release), `status`, `fromError` and `InvalidQueryException.code` (now `validationCode`) are
+deprecated. `SyncPaused.error` and `SyncRetrying.error` are `WincheDatabaseException`s.
+
+- **`settings`**, like every Winche package: `WincheDatabase.instance.settings = WincheDatabaseSettings(…)`. `config` and `WincheDatabaseConfig` remain, deprecated.
+- **Typed references:** document references are `docRefValue` (was `referenceValue`), and
+  there are file and user references (`fileRefValue`, `userRefValue`; `FileRefValue`, `UserRefValue`). Write them
+  with `Link.document(path)`, `Link.file(path)`, `Link.user(uid)`. Needs a Winche.Database that knows the new tags.
+- **Expanding references:** reference fields read back as a `Link` (`kind`, `target`, `data()`), not a path string.
+  `doc(…).expand([...])` / `query.expand([...])` fill links' `data()` (server `expand`, PROTOCOL §7.7), nested
+  through referenced documents; a file or user reference brings the file's record or the user's profile.
+  `Link.withConverter`, `DocumentSnapshot.withConverter`, `snapshot.get<T>(field)`. Writing a `Link` stores the
+  reference. Offline expansion follows the server's expand limit (`expandLimit` in `welcome`). Live, links follow changes; offline, document links are followed through the
+  cache with the user's unsynced writes. Needs Winche.Database with `expand`.
+
+## 7.3.0
+
+**New: signed-out access.** `WincheDatabaseConfig(allowSignedOut: true)` lets the
+database work while nobody is signed in — and in an app with no auth service at
+all: requests go without a token and the server's rules decide
+(`request.auth == null`). The signed-out session caches in memory only and is
+replaced when someone signs in. Off by default; nothing changes without it.
+
+**Fix: a session that can't be built no longer leaves the previous one bound.**
+If building a signed-in user's session failed (no `directoryResolver`, say), the
+earlier session stayed bound under the new identity; now it's dropped and the
+error reported.
+
 ## 7.2.0
 
 **New: collection group queries.** `db.collectionGroup('notes')` queries every

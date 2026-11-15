@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:winche_core/winche_core.dart';
 import 'dart:math';
 
 import '../core/timestamps.dart';
@@ -72,12 +73,12 @@ class QueueingWriteCoordinator implements WriteCoordinator {
 
   void _validateBatch(List<Write> writes) {
     if (writes.length > 500) {
-      throw InvalidArgumentException(
+      throw WincheDatabaseException.of(WincheErrorCode.invalidArgument, 
           'Write batch exceeds the 500-write limit (${writes.length}).');
     }
     final bytes = utf8.encode(jsonEncode(writeFrame('', writes))).length;
     if (bytes > _maxFrameBytes) {
-      throw InvalidArgumentException(
+      throw WincheDatabaseException.of(WincheErrorCode.invalidArgument, 
           'Write frame is $bytes bytes, exceeding maxFrameBytes ($_maxFrameBytes).');
     }
   }

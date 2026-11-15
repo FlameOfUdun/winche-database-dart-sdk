@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../support/wire_error.dart';
 
 import 'package:test/test.dart';
 import 'package:winche_database/src/protocol/connection.dart';
@@ -16,7 +17,7 @@ Future<(ProtocolConnection, FakeChannel)> _makeConnected() async {
   fake.startCapture();
 
   final conn = ProtocolConnection(ConnectionConfig(
-    uri: Uri.parse('ws://fake/documents/ws'),
+    uri: Uri.parse('ws://fake/documents/v1/ws'),
     channelFactory: (_) => fake,
     pingInterval: const Duration(hours: 1), // disable auto-ping in tests
   ));
@@ -58,7 +59,7 @@ void main() {
     fake.startCapture();
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) => fake,
       pingInterval: const Duration(hours: 1),
     ));
@@ -68,8 +69,7 @@ void main() {
 
     fake.serverSend({
       'type': 'error',
-      'status': 'UNAUTHENTICATED',
-      'message': 'Token rejected.',
+      'error': wireError('UNAUTHENTICATED', 'Token rejected.'),
     });
 
     await expectLater(connectFuture, throwsA(isA<UnauthenticatedException>()));
@@ -145,9 +145,7 @@ void main() {
     fake.serverSend({
       'type': 'error',
       'id': id,
-      'status': 'NOT_FOUND',
-      'message': "Document does not exist.",
-      'details': null,
+      'error': wireError('NOT_FOUND', "Document does not exist.", null),
     });
 
     await expectLater(
@@ -322,8 +320,7 @@ void main() {
         fake.serverSend({
           'type': 'error',
           'id': '0', // matching the request id
-          'status': 'NOT_FOUND',
-          // 'message' missing — malformed
+          // 'error' missing — malformed
         });
       },
       (e, st) => fail('Zone error must not occur: $e'),
@@ -368,7 +365,7 @@ void main() {
     fake.startCapture();
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       tokenProvider: () => 'tok-123',
       channelFactory: (uri) {
         dialedUri = uri;
@@ -403,7 +400,7 @@ void main() {
     fake.startCapture();
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) => fake,
       pingInterval: const Duration(hours: 1),
     ));
@@ -427,7 +424,7 @@ void main() {
     final silentFake = FakeChannel();
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) => silentFake,
       pingInterval: const Duration(hours: 1),
     ));
@@ -462,7 +459,7 @@ void main() {
   // ---------------------------------------------------------------------------
   test('C2 — request() before connect() throws UnavailableException', () async {
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) => FakeChannel(),
       pingInterval: const Duration(hours: 1),
     ));
@@ -567,7 +564,7 @@ void main() {
     final channels = <FakeChannel>[];
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) {
         dialCount++;
         final c = FakeChannel()..startCapture();
@@ -607,7 +604,7 @@ void main() {
     final channels = <FakeChannel>[];
 
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) {
         dialCount++;
         final c = FakeChannel()..startCapture();

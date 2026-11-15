@@ -1,4 +1,5 @@
 import '../protocol/exceptions.dart';
+import 'package:winche_core/winche_core.dart';
 import '../protocol/messages.dart';
 import 'records.dart';
 
@@ -45,7 +46,7 @@ final class WriteConflict extends SyncEvent {
         _overwrite = onOverwrite;
 
   final List<String> paths;
-  final WincheProtocolException error;
+  final WincheDatabaseException error;
 
   /// The server's current document per path (null = absent), for the app to
   /// inspect while resolving.
@@ -90,7 +91,7 @@ final class WriteFailed extends SyncEvent {
   });
 
   final List<String> paths;
-  final WincheProtocolException error;
+  final WincheDatabaseException error;
 
   /// The dropped pending writes, in queue order.
   final List<PendingWrite> writes;
@@ -113,7 +114,7 @@ final class SyncRetrying extends SyncEvent {
 
   /// The document path(s) of the unit being retried.
   final List<String> paths;
-  final WincheProtocolException error;
+  final WincheDatabaseException error;
 
   /// Consecutive failed attempts (1 the first time).
   final int attempt;
@@ -132,5 +133,6 @@ final class SyncPaused extends SyncEvent {
 
   /// The document path(s) of the unit the queue is stalled on.
   final List<String> paths;
-  final UnauthenticatedException error;
+  /// Its code is [WincheErrorCode.unauthenticated].
+  final WincheDatabaseException error;
 }

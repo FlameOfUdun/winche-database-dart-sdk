@@ -300,7 +300,8 @@ void main() {
         await Future<void>.delayed(Duration.zero);
         final retries = events.whereType<SyncRetrying>().toList();
         expect(retries.map((e) => e.attempt), [1, 2]);
-        expect(retries.first.error.status, status);
+        // A status this client doesn't know is `unknown`; the rest read back as they were sent.
+        expect(retries.first.error.status, status == 'SOME_FUTURE_STATUS' ? 'UNKNOWN' : status);
         expect(retries.first.paths, ['users/u1']);
         expect(events.whereType<WriteFailed>(), isEmpty);
         expect(events.last, isA<WriteSynced>());

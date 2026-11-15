@@ -23,6 +23,7 @@ import 'src/offline/lazy_local_store.dart';
 import 'src/offline/local_store.dart';
 import 'src/offline/memory_local_store.dart';
 import 'src/offline/read_coordinator.dart';
+import 'src/offline/reference_walk.dart';
 import 'src/offline/records.dart';
 import 'src/offline/sync_controller.dart';
 import 'src/offline/sync_event.dart';

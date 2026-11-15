@@ -154,6 +154,7 @@ sealed class ServerFrame {
       'welcome' => WelcomeFrame(
           connectionId: req<String>('connectionId'),
           protocol: opt<num>('protocol')?.toInt(),
+          expandLimit: opt<num>('expandLimit')?.toInt(),
         ),
       'response' => ResponseFrame(
           id: req<String>('id'),
@@ -161,9 +162,7 @@ sealed class ServerFrame {
         ),
       'error' => ErrorFrame(
           id: opt<String>('id'),
-          status: req<String>('status'),
-          message: req<String>('message'),
-          details: opt<Map<String, Object?>>('details'),
+          error: req<Map<String, Object?>>('error'),
         ),
       'listen.snapshot' => ListenSnapshotFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -175,6 +174,8 @@ sealed class ServerFrame {
           resumeToken: json['resumeToken'] != null
               ? (json['resumeToken'] as num).toInt()
               : null,
+          included: includedOf(json['included']),
+          resolved: resolvedOf(json['resolved']),
         ),
       'listen.delta' => ListenDeltaFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -187,6 +188,10 @@ sealed class ServerFrame {
           resumeToken: json['resumeToken'] != null
               ? (json['resumeToken'] as num).toInt()
               : null,
+          included: includedOf(json['included']),
+          excluded: [for (final p in (json['excluded'] as List<Object?>? ?? const [])) p as String],
+          resolved: resolvedOf(json['resolved']),
+          unresolved: [for (final p in (json['unresolved'] as List<Object?>? ?? const [])) p as String],
         ),
       'listen.current' => ListenCurrentFrame(
           subscriptionId: req<String>('subscriptionId'),
@@ -199,10 +204,13 @@ sealed class ServerFrame {
 
 /// `{"type": "welcome", "connectionId": "...", "protocol"?: 3}`
 final class WelcomeFrame extends ServerFrame {
-  const WelcomeFrame({required this.connectionId, this.protocol});
+  const WelcomeFrame({required this.connectionId, this.protocol, this.expandLimit});
 
   final String connectionId;
   final int? protocol;
+
+  /// The most documents (with files and users) one expand response includes, on this server.
+  final int? expandLimit;
 }
 
 /// `{"type": "response", "id": "...", "result": {...}}`
@@ -213,24 +221,29 @@ final class ResponseFrame extends ServerFrame {
   final Map<String, Object?> result;
 }
 
-/// `{"type": "error", "id"?: "...", "status": "...", "message": "...", "details"?: {...}}`
+/// `{"type": "error", "id"?: "...", "error": {"code", "message", "reason"?, "details"?}}` — the shared Winche error.
 final class ErrorFrame extends ServerFrame {
-  const ErrorFrame({
-    required this.id,
-    required this.status,
-    required this.message,
-    this.details,
-  });
+  const ErrorFrame({required this.id, required this.error});
 
   final String? id;
-  final String status;
-  final String message;
-  final Map<String, Object?>? details;
 
-  /// Creates a [WincheProtocolException] from this frame.
-  WincheProtocolException toException() =>
-      WincheProtocolException.fromError(status, message, details);
+  /// The shared error object.
+  final Map<String, Object?> error;
+
+  /// Creates a [WincheDatabaseException] from this frame.
+  WincheDatabaseException toException() => WincheDatabaseException.fromWire(error);
 }
+
+/// The `resolved` of a response or frame (PROTOCOL §7.7): what kinded expand paths (`file:`, `user:`) stand for,
+/// by `kind:value`, or null when absent.
+Map<String, Map<String, Object?>>? resolvedOf(Object? json) => json is Map<String, Object?>
+    ? {for (final e in json.entries) if (e.value is Map<String, Object?>) e.key: e.value as Map<String, Object?>}
+    : null;
+
+/// The `included` of a response or frame (PROTOCOL §7.7): referenced documents by path, or null when absent.
+Map<String, WireDocument>? includedOf(Object? json) => json is Map<String, Object?>
+    ? {for (final e in json.entries) e.key: WireDocument.fromJson(e.value as Map<String, Object?>)}
+    : null;
 
 /// `{"type": "listen.snapshot", ...}` — full state snapshot (PROTOCOL §7.6).
 final class ListenSnapshotFrame extends ServerFrame {
@@ -239,7 +252,15 @@ final class ListenSnapshotFrame extends ServerFrame {
     required this.documents,
     required this.readTime,
     this.resumeToken,
+    this.included,
+    this.resolved,
   });
+
+  /// With `expand`: every referenced document the caller may read, by path (replaces the previous set).
+  final Map<String, WireDocument>? included;
+
+  /// With kinded `expand` paths: every resolved value, by `kind:value` (replaces the previous set).
+  final Map<String, Map<String, Object?>>? resolved;
 
   final String subscriptionId;
   final List<WireDocument> documents;
@@ -257,7 +278,23 @@ final class ListenDeltaFrame extends ServerFrame {
     required this.count,
     required this.readTime,
     this.resumeToken,
+    this.included,
+    this.excluded = const [],
+    this.resolved,
+    this.unresolved = const [],
   });
+
+  /// Resolved values new or changed since the last frame, by `kind:value`.
+  final Map<String, Map<String, Object?>>? resolved;
+
+  /// Resolved values no longer there.
+  final List<String> unresolved;
+
+  /// With `expand`: referenced documents new or changed since the last frame.
+  final Map<String, WireDocument>? included;
+
+  /// With `expand`: referenced documents no longer included.
+  final List<String> excluded;
 
   final String subscriptionId;
   final List<WireChange> changes;
@@ -296,10 +333,11 @@ final class UnknownFrame extends ServerFrame {
 Map<String, Object?> pingFrame(String id) => {'type': 'ping', 'id': id};
 
 /// `{"type": "doc.get", "id": "...", "path": "..."}` (PROTOCOL §7.4)
-Map<String, Object?> docGetFrame(String id, String path) => {
+Map<String, Object?> docGetFrame(String id, String path, {List<String>? expand}) => {
       'type': 'doc.get',
       'id': id,
       'path': path,
+      if (expand != null && expand.isNotEmpty) 'expand': expand,
     };
 
 /// `{"type": "doc.getAll", "id": "...", "paths": [...]}` (PROTOCOL §7.4)
@@ -310,10 +348,11 @@ Map<String, Object?> docGetAllFrame(String id, List<String> paths) => {
     };
 
 /// `{"type": "query", "id": "...", "query": {...}}` (PROTOCOL §7.4)
-Map<String, Object?> queryFrame(String id, QuerySpec query) => {
+Map<String, Object?> queryFrame(String id, QuerySpec query, {List<String>? expand}) => {
       'type': 'query',
       'id': id,
       'query': query.toJson(),
+      if (expand != null && expand.isNotEmpty) 'expand': expand,
     };
 
 /// `{"type": "count", "id": "...", "query": {...}}`
@@ -338,12 +377,13 @@ Map<String, Object?> aggregateFrame(
     };
 
 /// `{"type": "doc.listen", "id": "...", "path": "...", "protocol": ..., "resumeToken"?: ...}`
-Map<String, Object?> docListenFrame(String id, String path, {int? resumeToken}) {
+Map<String, Object?> docListenFrame(String id, String path, {int? resumeToken, List<String>? expand}) {
   final frame = <String, Object?>{
     'type': 'doc.listen',
     'id': id,
     'path': path,
     'protocol': wireProtocolVersion,
+    if (expand != null && expand.isNotEmpty) 'expand': expand,
   };
   if (resumeToken != null) frame['resumeToken'] = resumeToken;
   return frame;
@@ -403,12 +443,14 @@ Map<String, Object?> listenFrame(
   String id,
   QuerySpec query, {
   int? resumeToken,
+  List<String>? expand,
 }) {
   final frame = <String, Object?>{
     'type': 'listen',
     'id': id,
     'query': query.toJson(),
     'protocol': wireProtocolVersion,
+    if (expand != null && expand.isNotEmpty) 'expand': expand,
   };
   if (resumeToken != null) frame['resumeToken'] = resumeToken;
   return frame;

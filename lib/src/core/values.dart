@@ -110,12 +110,18 @@ sealed class Value {
         }
         return BytesValue(bytes);
 
-      case 'referenceValue':
+      case 'docRefValue':
+      case 'fileRefValue':
+      case 'userRefValue':
         if (payload is! String) {
           throw FormatException(
-              'referenceValue payload must be a string, got: ${payload.runtimeType}');
+              '$tag payload must be a string, got: ${payload.runtimeType}');
         }
-        return ReferenceValue(payload);
+        return switch (tag) {
+          'fileRefValue' => FileRefValue(payload),
+          'userRefValue' => UserRefValue(payload),
+          _ => ReferenceValue(payload),
+        };
 
       case 'geoPointValue':
         if (payload is! Map) {
@@ -373,14 +379,14 @@ final class BytesValue extends Value {
   String toString() => 'BytesValue(${base64.encode(value)})';
 }
 
-/// `{"referenceValue": "collection/id"}` — document path string.
+/// `{"docRefValue": "collection/id"}`: a reference to a document, by path.
 final class ReferenceValue extends Value {
   const ReferenceValue(this.path);
 
   final String path;
 
   @override
-  Object toJson() => {'referenceValue': path};
+  Object toJson() => {'docRefValue': path};
 
   @override
   bool operator ==(Object other) =>
@@ -391,6 +397,44 @@ final class ReferenceValue extends Value {
 
   @override
   String toString() => 'ReferenceValue($path)';
+}
+
+/// `{"fileRefValue": "scans/a.png"}`: a reference to a file in Winche Storage.
+final class FileRefValue extends Value {
+  const FileRefValue(this.path);
+
+  final String path;
+
+  @override
+  Object toJson() => {'fileRefValue': path};
+
+  @override
+  bool operator ==(Object other) => other is FileRefValue && other.path == path;
+
+  @override
+  int get hashCode => Object.hash(FileRefValue, path);
+
+  @override
+  String toString() => 'FileRefValue($path)';
+}
+
+/// `{"userRefValue": "uid"}`: a reference to a Winche Auth user.
+final class UserRefValue extends Value {
+  const UserRefValue(this.uid);
+
+  final String uid;
+
+  @override
+  Object toJson() => {'userRefValue': uid};
+
+  @override
+  bool operator ==(Object other) => other is UserRefValue && other.uid == uid;
+
+  @override
+  int get hashCode => Object.hash(UserRefValue, uid);
+
+  @override
+  String toString() => 'UserRefValue($uid)';
 }
 
 /// `{"geoPointValue": {"latitude": <number>, "longitude": <number>}}`

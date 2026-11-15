@@ -18,7 +18,7 @@
 //
 // Run the sample server first (uid hard-coded to "user-123"; rule allows
 // userData/{userId}/** when auth.uid == userId), then:
-//   dart run tool/resume_e2e.dart [ws://localhost:5183/documents/ws] [storeDir]
+//   dart run tool/resume_e2e.dart [ws://localhost:5183/documents/v1/ws] [storeDir]
 import 'dart:io';
 
 import 'package:winche_core/winche_core.dart';
@@ -32,7 +32,7 @@ import 'package:winche_database/winche_database.dart';
 /// `userData/{userId} allow if auth.uid == userId`, so every operation here
 /// came back `PERMISSION_DENIED`. `tool/feature_smoke_test.dart` carries its
 /// own copy of this for the same reason.
-final class ResumeAuth extends WincheAuthService {
+final class ResumeAuth extends WincheService with WincheIdentitySource {
   ResumeAuth(super.app);
 
   WincheIdentity? _identity;
@@ -52,7 +52,7 @@ final class ResumeAuth extends WincheAuthService {
 
 Future<void> main(List<String> args) async {
   final wsUrl =
-      args.isNotEmpty ? args[0] : 'ws://localhost:5183/documents/ws';
+      args.isNotEmpty ? args[0] : 'ws://localhost:5183/documents/v1/ws';
   final dir = args.length > 1
       ? args[1]
       : Directory.systemTemp.createTempSync('winche_resume_e2e').path;
@@ -64,7 +64,7 @@ Future<void> main(List<String> args) async {
 
   Winche.initializeApp(
     options: WincheOptions(
-      databaseEndpoint: Uri.parse(wsUrl),
+      endpoints: {'database': Uri.parse(wsUrl)},
       directoryResolver: () async => dir,
     ),
   );

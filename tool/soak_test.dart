@@ -13,7 +13,7 @@
 //
 // Run the sample server first (uid hard-coded "user-123"; rule allows
 // userData/{userId}/**), then:
-//   dart run tool/soak_test.dart [ws://localhost:5183/documents/ws] [storeDir]
+//   dart run tool/soak_test.dart [ws://localhost:5183/documents/v1/ws] [storeDir]
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -25,7 +25,7 @@ import 'package:winche_database/winche_database.dart';
 const uid = 'user-123';
 
 Future<void> main(List<String> args) async {
-  final wsUrl = args.isNotEmpty ? args[0] : 'ws://localhost:5183/documents/ws';
+  final wsUrl = args.isNotEmpty ? args[0] : 'ws://localhost:5183/documents/v1/ws';
   final dir = args.length > 1
       ? args[1]
       : Directory.systemTemp.createTempSync('winche_soak').path;
@@ -46,12 +46,12 @@ Future<void> main(List<String> args) async {
   // stands in for a real auth backend.
   Winche.initializeApp(
     options: WincheOptions(
-      databaseEndpoint: Uri.parse(wsUrl),
+      endpoints: {'database': Uri.parse(wsUrl)},
       directoryResolver: () async => dir,
     ),
   );
   final db = WincheDatabase.instance
-    ..config = const WincheDatabaseConfig(
+    ..settings = const WincheDatabaseSettings(
       conflictPolicy: ConflictPolicy.clientWins, // auto-resolve so the queue never stalls
       cacheSizeBytes: 16 * 1024, // small cap → eviction fires under churn
     );

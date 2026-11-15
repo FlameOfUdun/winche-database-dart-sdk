@@ -1,173 +1,173 @@
-/// Winche Database exceptions for all error status codes (PROTOCOL §5.1).
+// The per-kind subclasses are deprecated for callers, but the database still throws them for one release so
+// existing catches keep working.
+// ignore_for_file: deprecated_member_use_from_same_package
+
+/// Winche Database exceptions (PROTOCOL §5).
 library;
 
 import 'package:winche_core/winche_core.dart';
 
-/// Base exception for every failure this package's backend reports.
+/// A database request failed.
 ///
-/// Sits one level under core's [WincheException], the root for the whole
-/// Winche stack. That is the intended shape: `on WincheException` asks "did
-/// any Winche SDK fail?", while `on WincheProtocolException` asks the
-/// narrower and usually more useful "did the *database backend* reject
-/// this?" — a question a client-side lifecycle failure like
-/// [WincheUnboundException] should not answer yes to.
+/// [code] is the kind every Winche package shares; switch on it. [reason] is
+/// the server's more precise code where it sent one (`invalid-query` for a
+/// query that doesn't parse or validate), and [details] anything else it sent
+/// (`jsonPath`, a plan-validation `code`, an `errorId`).
 ///
-/// [status] is one of the PROTOCOL §5.1 status strings.
-/// [message], inherited from [WincheException], is the human-readable
-/// description.
-/// [details] is an optional map with additional context (e.g. jsonPath, code).
-class WincheProtocolException extends WincheException {
-  const WincheProtocolException(this.status, super.message, [this.details]);
+/// `on WincheException` asks "did any Winche SDK fail?"; `on
+/// WincheDatabaseException` asks "did the database?". A client-side lifecycle
+/// failure such as [WincheUnboundException] is neither.
+class WincheDatabaseException extends WincheException {
+  /// Creates an exception. The database itself throws through [of].
+  const WincheDatabaseException(super.code, super.message, {this.reason, this.details});
 
-  final String status;
+  /// The reason a query was refused: [WincheErrorCode.invalidArgument] with this.
+  static const invalidQuery = 'invalid-query';
+
+  /// The server's more precise code, when it sent one.
+  final String? reason;
+
+  /// What else the server sent, if anything.
   final Map<String, Object?>? details;
 
-  /// Factory that returns the most specific subclass for the given [status].
-  factory WincheProtocolException.fromError(
-    String status,
-    String message, [
-    Map<String, Object?>? details,
-  ]) {
-    return switch (status) {
-      'ABORTED' => AbortedException(message, details),
-      'PERMISSION_DENIED' => PermissionDeniedException(message, details),
-      'UNAUTHENTICATED' => UnauthenticatedException(message, details),
-      'INVALID_QUERY' => InvalidQueryException(message, details),
-      'INVALID_ARGUMENT' => InvalidArgumentException(message, details),
-      'NOT_FOUND' => NotFoundException(message, details),
-      'ALREADY_EXISTS' => AlreadyExistsException(message, details),
-      'FAILED_PRECONDITION' => FailedPreconditionException(message, details),
-      'DEADLINE_EXCEEDED' => DeadlineExceededException(message, details),
-      'INTERNAL' => InternalException(message, details),
-      'UNAVAILABLE' => UnavailableException(message, details),
-      _ => WincheProtocolException(status, message, details),
-    };
+  /// An exception of kind [code]: for this release, the deprecated subclass for
+  /// that kind when there is one, so catches on those keep working.
+  factory WincheDatabaseException.of(WincheErrorCode code, String message, {String? reason, Map<String, Object?>? details}) =>
+      switch (code) {
+        WincheErrorCode.invalidArgument when reason == invalidQuery => InvalidQueryException(message, details),
+        WincheErrorCode.invalidArgument => InvalidArgumentException(message, details, reason),
+        WincheErrorCode.aborted => AbortedException(message, details, reason),
+        WincheErrorCode.permissionDenied => PermissionDeniedException(message, details, reason),
+        WincheErrorCode.unauthenticated => UnauthenticatedException(message, details, reason),
+        WincheErrorCode.notFound => NotFoundException(message, details, reason),
+        WincheErrorCode.alreadyExists => AlreadyExistsException(message, details, reason),
+        WincheErrorCode.failedPrecondition => FailedPreconditionException(message, details, reason),
+        WincheErrorCode.deadlineExceeded => DeadlineExceededException(message, details, reason),
+        WincheErrorCode.internal => InternalException(message, details, reason),
+        WincheErrorCode.unavailable => UnavailableException(message, details, reason),
+        _ => WincheDatabaseException(code, message, reason: reason, details: details),
+      };
+
+  /// Reads the `error` object of an error frame (or a REST error body):
+  /// `{code, message, reason?, details?}`.
+  factory WincheDatabaseException.fromWire(Map<String, Object?> error) {
+    final named = error['code'] as String?;
+    final code = WincheErrorCode.tryParse(named);
+    return WincheDatabaseException.of(
+      code ?? WincheErrorCode.unknown,
+      error['message'] as String? ?? 'The database refused the request.',
+      reason: error['reason'] as String? ?? (code == null ? named : null),
+      details: switch (error['details']) {
+        final Map<String, Object?> d => d,
+        _ => null,
+      },
+    );
   }
 
-  @override
-  String toString() => 'WincheProtocolException($status): $message';
-}
+  /// The old wire status (`NOT_FOUND`, `INVALID_QUERY`, …).
+  @Deprecated('Use code (WincheErrorCode) and reason. Removed in the next major version.')
+  String get status => code == WincheErrorCode.invalidArgument && reason == invalidQuery
+      ? 'INVALID_QUERY'
+      : code.wireName.toUpperCase().replaceAll('-', '_');
 
-/// `ABORTED` — transaction conflict, expired, or unknown transaction id.
-class AbortedException extends WincheProtocolException {
-  const AbortedException(String message, [Map<String, Object?>? details])
-      : super('ABORTED', message, details);
-
-  @override
-  String toString() => 'AbortedException: $message';
-}
-
-/// `PERMISSION_DENIED` — access rule denied the operation.
-class PermissionDeniedException extends WincheProtocolException {
-  const PermissionDeniedException(String message,
-      [Map<String, Object?>? details])
-      : super('PERMISSION_DENIED', message, details);
+  /// The old way to make one, from a wire status.
+  @Deprecated('Use WincheDatabaseException.of. Removed in the next major version.')
+  factory WincheDatabaseException.fromError(String status, String message, [Map<String, Object?>? details]) =>
+      status == 'INVALID_QUERY'
+          ? WincheDatabaseException.of(WincheErrorCode.invalidArgument, message, reason: invalidQuery, details: details)
+          : WincheDatabaseException.of(
+              WincheErrorCode.tryParse(status.toLowerCase().replaceAll('_', '-')) ?? WincheErrorCode.unknown,
+              message,
+              details: details,
+            );
 
   @override
-  String toString() => 'PermissionDeniedException: $message';
+  String toString() => '$runtimeType(${code.wireName}${reason == null ? '' : '/$reason'}): $message';
 }
 
-/// `UNAUTHENTICATED` — authentication token invalid or missing.
-class UnauthenticatedException extends WincheProtocolException {
-  const UnauthenticatedException(String message,
-      [Map<String, Object?>? details])
-      : super('UNAUTHENTICATED', message, details);
+/// The old name of [WincheDatabaseException].
+@Deprecated('Use WincheDatabaseException. Removed in the next major version.')
+typedef WincheProtocolException = WincheDatabaseException;
 
-  @override
-  String toString() => 'UnauthenticatedException: $message';
+/// `aborted` — a transaction conflict, an expired or unknown transaction.
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.aborted. Removed in the next major version.')
+class AbortedException extends WincheDatabaseException {
+  const AbortedException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.aborted, message, details: details, reason: reason);
 }
 
-/// `INVALID_QUERY` — query or pipeline parse / validation error.
-///
-/// For JSON parse errors, [jsonPath] contains the path (from `details.jsonPath`).
-/// For plan-validation failures, [code] contains the validation code
-/// (from `details.code`).
-class InvalidQueryException extends WincheProtocolException {
+/// `permissionDenied` — the rules refused the operation.
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.permissionDenied. Removed in the next major version.')
+class PermissionDeniedException extends WincheDatabaseException {
+  const PermissionDeniedException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.permissionDenied, message, details: details, reason: reason);
+}
+
+/// `unauthenticated` — no valid sign-in.
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.unauthenticated. Removed in the next major version.')
+class UnauthenticatedException extends WincheDatabaseException {
+  const UnauthenticatedException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.unauthenticated, message, details: details, reason: reason);
+}
+
+/// `invalidArgument` with reason `invalid-query` — a query that doesn't parse or validate.
+@Deprecated('Catch WincheDatabaseException and check reason == WincheDatabaseException.invalidQuery. Removed in the next major version.')
+class InvalidQueryException extends WincheDatabaseException {
   const InvalidQueryException(String message, [Map<String, Object?>? details])
-      : super('INVALID_QUERY', message, details);
+      : super(WincheErrorCode.invalidArgument, message, details: details, reason: WincheDatabaseException.invalidQuery);
 
-  /// JSON path of the parse error, if available (e.g. `"$.where.op"`).
+  /// The JSON path of a parse error, when there is one.
   String? get jsonPath => details?['jsonPath'] as String?;
 
-  /// Validation code for plan-validation failures
-  /// (e.g. `"ORDERBY_FIELD_NOT_FILTERED"`).
-  String? get code => details?['code'] as String?;
-
-  @override
-  String toString() => 'InvalidQueryException: $message';
+  /// The plan-validation code (e.g. `LIMIT_CONFLICT`), when there is one.
+  String? get validationCode => details?['code'] as String?;
 }
 
-/// `INVALID_ARGUMENT` — malformed request, bad field types, batch size
-/// exceeded, or an invalid write shape.
-class InvalidArgumentException extends WincheProtocolException {
-  const InvalidArgumentException(String message,
-      [Map<String, Object?>? details])
-      : super('INVALID_ARGUMENT', message, details);
-
-  @override
-  String toString() => 'InvalidArgumentException: $message';
+/// `invalidArgument` — a malformed request or bad values.
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.invalidArgument. Removed in the next major version.')
+class InvalidArgumentException extends WincheDatabaseException {
+  const InvalidArgumentException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.invalidArgument, message, details: details, reason: reason);
 }
 
-/// `NOT_FOUND` — an `UpdateWrite` or `exists: true` precondition targeted a
-/// document that does not exist.
-class NotFoundException extends WincheProtocolException {
-  const NotFoundException(String message, [Map<String, Object?>? details])
-      : super('NOT_FOUND', message, details);
-
-  @override
-  String toString() => 'NotFoundException: $message';
+/// `notFound` — an update or `exists: true` precondition on a missing document.
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.notFound. Removed in the next major version.')
+class NotFoundException extends WincheDatabaseException {
+  const NotFoundException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.notFound, message, details: details, reason: reason);
 }
 
-/// `ALREADY_EXISTS` — an `exists: false` precondition targeted an existing
-/// document.
-class AlreadyExistsException extends WincheProtocolException {
-  const AlreadyExistsException(String message, [Map<String, Object?>? details])
-      : super('ALREADY_EXISTS', message, details);
-
-  @override
-  String toString() => 'AlreadyExistsException: $message';
+/// `alreadyExists` — an `exists: false` precondition on an existing document.
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.alreadyExists. Removed in the next major version.')
+class AlreadyExistsException extends WincheDatabaseException {
+  const AlreadyExistsException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.alreadyExists, message, details: details, reason: reason);
 }
 
-/// `FAILED_PRECONDITION` — an `updateTime` precondition did not match.
-class FailedPreconditionException extends WincheProtocolException {
-  const FailedPreconditionException(String message,
-      [Map<String, Object?>? details])
-      : super('FAILED_PRECONDITION', message, details);
-
-  @override
-  String toString() => 'FailedPreconditionException: $message';
+/// `failedPrecondition` — an `updateTime` precondition that didn't hold.
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.failedPrecondition. Removed in the next major version.')
+class FailedPreconditionException extends WincheDatabaseException {
+  const FailedPreconditionException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.failedPrecondition, message, details: details, reason: reason);
 }
 
-/// `DEADLINE_EXCEEDED` — the operation timed out on the server.
-class DeadlineExceededException extends WincheProtocolException {
-  const DeadlineExceededException(String message,
-      [Map<String, Object?>? details])
-      : super('DEADLINE_EXCEEDED', message, details);
-
-  @override
-  String toString() => 'DeadlineExceededException: $message';
+/// `deadlineExceeded` — no answer in time.
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.deadlineExceeded. Removed in the next major version.')
+class DeadlineExceededException extends WincheDatabaseException {
+  const DeadlineExceededException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.deadlineExceeded, message, details: details, reason: reason);
 }
 
-/// `INTERNAL` — an unexpected server error (always a bug; report it).
-class InternalException extends WincheProtocolException {
-  const InternalException(String message, [Map<String, Object?>? details])
-      : super('INTERNAL', message, details);
-
-  @override
-  String toString() => 'InternalException: $message';
+/// `internal` — an unexpected server error (always a bug; `details.errorId` finds it in the server's log).
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.internal. Removed in the next major version.')
+class InternalException extends WincheDatabaseException {
+  const InternalException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.internal, message, details: details, reason: reason);
 }
 
-/// `UNAVAILABLE` — client-side status indicating the server is unreachable,
-/// the WebSocket was disconnected, or the response body could not be parsed.
-///
-/// This status is **client-generated** and does not appear in the PROTOCOL
-/// status vocabulary; it is used by [ProtocolConnection]
-/// to signal transport-level failures.
-class UnavailableException extends WincheProtocolException {
-  const UnavailableException(String message, [Map<String, Object?>? details])
-      : super('UNAVAILABLE', message, details);
-
-  @override
-  String toString() => 'UnavailableException: $message';
+/// `unavailable` — the server is unreachable or the connection dropped (raised by the client).
+@Deprecated('Catch WincheDatabaseException and check code == WincheErrorCode.unavailable. Removed in the next major version.')
+class UnavailableException extends WincheDatabaseException {
+  const UnavailableException(String message, [Map<String, Object?>? details, String? reason])
+      : super(WincheErrorCode.unavailable, message, details: details, reason: reason);
 }
-

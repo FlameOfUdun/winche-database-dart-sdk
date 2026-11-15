@@ -16,7 +16,7 @@ void main() {
   }) async {
     final channels = <FakeChannel>[];
     final conn = ProtocolConnection(ConnectionConfig(
-      uri: Uri.parse('ws://fake/documents/ws'),
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
       channelFactory: (_) {
         final fake = FakeChannel()..startCapture();
         channels.add(fake);

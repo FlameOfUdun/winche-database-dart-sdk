@@ -98,7 +98,7 @@ abstract class _LiveListener<TSnapshot> {
     // Bind here rather than at construction, so a consumer subscribing while
     // signed out receives a stream error it can render instead of an exception
     // thrown into whatever called `snapshots()`.
-    final session = _db._session;
+    final session = _db._currentSession();
     if (session == null) {
       final controller = _controller;
       _controller = null;
@@ -239,10 +239,15 @@ abstract class _LiveListener<TSnapshot> {
 /// `metadata.hasPendingWrites` is true when the overlay added un-acked local
 /// writes. Backed by a [_QueryFeed].
 final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
-  _QueryListener(super._db, this._spec, this._converter);
+  _QueryListener(super._db, this._spec, this._converter, [this._expand]);
 
   final QuerySpec _spec;
   final Converter<T> _converter;
+  final List<String>? _expand;
+
+  /// With `expand`: the referenced documents and resolved values last sent by the server.
+  Map<String, WireDocument>? _included;
+  Map<String, Map<String, Object?>>? _resolved;
 
   /// Last server-authoritative set (null until the first server snapshot).
   List<WireDocument>? _serverDocs;
@@ -252,11 +257,16 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
   bool _first = true;
 
   @override
-  _LiveFeed _createFeed() => _QueryFeed(_db, _session, _spec);
+  _LiveFeed _createFeed() => _QueryFeed(_db, _session, _spec, _expand);
 
   @override
   Future<void> _storeServerDocs(_FeedUpdate update) async {
     _serverDocs = update.docs;
+    if (update.included != null) {
+      _included = update.included;
+      await _session.cache.putConfirmedAll(update.included!.values.toList()); // warm for offline reads
+    }
+    if (update.resolved != null) _resolved = update.resolved;   // kept while offline: the last known
     final paths = [for (final d in update.docs) d.path];
     await _session.targets.setMembers(_spec, paths);
     _session.activeTargets.pin(this, paths);
@@ -291,11 +301,16 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
       fromCache: !_serverActive,
       hasPendingWrites: view.anyPending,
     );
+    final expand = _splitExpand(_expand);
+    // Live, the server's referenced documents; offline, the cache's; either way
+    // with the user's own unsynced writes on top.
+    final included = expand == null ? null
+        : await _includedLocally(_db, shaped, expand, fromServer: _serverActive ? _included : null);
     final newDocs = [
       for (final wire in shaped)
         DocumentSnapshot<T>._fromWire(
             _db.doc(wire.path).withConverter(_converter), wire,
-            metadata: metadata),
+            metadata: metadata, included: included, expand: expand, resolved: _resolved),
     ];
 
     final changes = _first
@@ -398,9 +413,14 @@ final class _QueryListener<T> extends _LiveListener<QuerySnapshot<T>> {
 /// query-vs-document split mirrors the server: `doc.listen` is authorized as
 /// `get` (not the collection `list`).
 final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
-  _DocumentListener(super._db, this._ref);
+  _DocumentListener(super._db, this._ref, [this._expand]);
 
   final DocumentReference<T> _ref;
+  final List<String>? _expand;
+
+  /// With `expand`: the referenced documents and resolved values last sent by the server.
+  Map<String, WireDocument>? _included;
+  Map<String, Map<String, Object?>>? _resolved;
 
   String get _path => _ref.path;
 
@@ -408,10 +428,15 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
   WireDocument? _serverDoc;
 
   @override
-  _LiveFeed _createFeed() => _DocumentFeed(_db, _session, _path);
+  _LiveFeed _createFeed() => _DocumentFeed(_db, _session, _path, _expand);
 
   @override
   Future<void> _storeServerDocs(_FeedUpdate update) async {
+    if (update.included != null) {
+      _included = update.included;
+      await _session.cache.putConfirmedAll(update.included!.values.toList());
+    }
+    if (update.resolved != null) _resolved = update.resolved;
     _serverDoc = update.docs.isEmpty ? null : update.docs.first;
     if (_serverDoc != null) {
       _session.activeTargets.pin(this, [_path]);
@@ -445,9 +470,13 @@ final class _DocumentListener<T> extends _LiveListener<DocumentSnapshot<T>> {
       hasPendingWrites: eff.hasPendingWrites,
     );
     if (controller.isClosed) return;
+    final expand = _splitExpand(_expand);
+    final included = expand == null || eff.document == null ? null
+        : await _includedLocally(_db, [eff.document], expand, fromServer: _serverActive ? _included : null);
+    if (controller.isClosed) return;
     controller.add(eff.document == null
         ? DocumentSnapshot<T>._missing(_ref, metadata: metadata)
         : DocumentSnapshot<T>._fromWire(_ref, eff.document!,
-            metadata: metadata));
+            metadata: metadata, included: included, expand: expand, resolved: _resolved));
   }
 }

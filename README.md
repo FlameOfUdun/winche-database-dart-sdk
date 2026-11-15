@@ -57,9 +57,9 @@ flowchart TD
 
 `winche_database` is a consumer service on top of `winche_core`: it does not dial
 anything or open a store until an identity is signed in, and it does not carry a
-sign-in surface of its own — that is a `WincheAuthService`'s job (a real backend
-package, or `ScriptedAuthService` from `package:winche_core/testing.dart` for
-tests and samples). Set up core once at startup, then reach the database
+sign-in surface of its own — that is an identity source's job: `winche_auth`,
+any other `WincheIdentitySource`, or `ScriptedAuthService` from
+`package:winche_core/testing.dart` for tests and samples. Set up core once at startup, then reach the database
 anywhere:
 
 ```dart
@@ -68,7 +68,7 @@ import 'package:winche_database/winche_database.dart';
 
 Winche.initializeApp(
   options: WincheOptions(
-    databaseEndpoint: Uri.parse('ws://localhost:5183/documents/ws'),
+    baseUrl: Uri.parse('http://localhost:9090'),   // live at ws://…/documents/v1/ws
     directoryResolver: () async => appDir,   // required on native (sembast root)
   ),
 );
@@ -83,23 +83,24 @@ sign-in, sign-out and user switch. This package never sees a token directly —
 it reads one from the current session on every (re)dial.
 
 Tuning that has nothing to do with *which* backend or *which* identity lives on
-`WincheDatabaseConfig`, set right after obtaining the instance:
+`WincheDatabaseSettings`, set right after obtaining the instance:
 
 ```dart
-db.config = const WincheDatabaseConfig(
+db.settings = const WincheDatabaseSettings(
   pingInterval: const Duration(seconds: 30),   // default
-  autoReconnect: true,                          // default
+  requestTimeout: const Duration(seconds: 60),  // default; Duration.zero disables it
   maxBackoff: const Duration(seconds: 30),      // default
   maxFrameBytes: 1 << 20,                       // default 1 MiB — see Writes
   inMemory: false,                              // default
   conflictPolicy: ConflictPolicy.manual,        // default
   maxCachedDocuments: null,                     // default — see Cache management
   cacheSizeBytes: null,                         // default — see Cache management
+  allowSignedOut: false,                        // default — see Signed-out access
 );
 ```
 
-Every field defaults, so `const WincheDatabaseConfig()` (equivalently, never
-touching `config`) is a valid, fully-working configuration. Setting `config`
+Every field defaults, so `const WincheDatabaseSettings()` (equivalently, never
+touching `settings`) is a valid, fully-working configuration. Setting `settings`
 **throws a `StateError` once the database has been used** — once any member has
 opened its store or dialled its socket. This works on the line right after
 `.instance` because construction is lazy: obtaining the instance never itself
@@ -143,15 +144,15 @@ imports for `Winche.initializeApp`. This package does not re-export it: "nobody
 is signed in" is a stack-wide condition core owns, not one `winche_database`
 defines.
 
-It is deliberately **not** a `WincheProtocolException` — it never crosses the
+It is deliberately **not** a `WincheDatabaseException` — it never crosses the
 wire, so it does not belong in the backend-error hierarchy, and `on
-WincheProtocolException` will not catch it. It *is* a `WincheException`, core's
+WincheDatabaseException` will not catch it. It *is* a `WincheException`, core's
 root for the whole stack, so `on WincheException` will. That is the distinction
 worth knowing: the root answers "did any Winche SDK fail?", which is rarely the
 question you want here. Being signed out is not an error to retry or surface
-next to a `PERMISSION_DENIED`; it is fixed by signing in. Gate on sign-in state
+next to a `permissionDenied`; it is fixed by signing in. Gate on sign-in state
 (your auth package's own identity/session surface, e.g. a
-`WincheAuthService.activeIdentity`) rather than catching this exception at call
+`WincheIdentitySource.activeIdentity`) rather than catching this exception at call
 sites.
 
 ---
@@ -184,7 +185,9 @@ final ref = await users.add({'name': 'Bob'});             // auto-generated id
 
 Native Dart values map to typed wire values: `int`, `double`, `bool`, `String`,
 `DateTime` (→ timestamp), `Uint8List` (→ bytes), `GeoPoint`, a
-`DocumentReference` (→ reference), `List`, and nested `Map`.
+`DocumentReference` (→ document reference), a `Link` (→ document, file or user
+reference; see [Expanding references](#expanding-references)), `List`, and
+nested `Map`.
 
 `FieldValue` sentinels express server-side transforms inside `set`/`update`:
 
@@ -214,7 +217,7 @@ Every read goes through the cache. `GetOptions.source` picks the policy:
 
 - `Source.serverOrCache` (default) — read the server, refreshing the cache; on a
   **transient** failure (unavailable / timeout / internal) fall back to cache.
-  Actionable errors (`PERMISSION_DENIED`, `UNAUTHENTICATED`, `INVALID_*`) propagate.
+  Actionable errors (`permissionDenied`, `unauthenticated`, `invalidArgument`) propagate.
 - `Source.server` — server only; throws when unreachable.
 - `Source.cache` — local only; never contacts the server.
 
@@ -316,6 +319,64 @@ final recent = await db.collectionGroup('sessionHistory')
     .get();
 ```
 
+### Expanding references
+
+A reference field reads back as a **`Link`**: `kind` (`LinkKind.document`, `.file` or `.user`), `target` (the
+document path, file path or uid) and `data()`, which is null unless the read **expanded** it. Write references with
+`Link.document('patients/p1')` (or a `DocumentReference`), `Link.file('scans/a.png')` and `Link.user(uid)`; they're
+stored typed (`docRefValue`, `fileRefValue`, `userRefValue`), which is how the server knows what to resolve:
+
+```dart
+await db.doc('visits/v1').set({
+  'patient': Link.document('patients/p1'),
+  'scan': Link.file('scans/a.png'),
+  'author': Link.user(auth.currentUser!.uid),
+});
+```
+
+```dart
+final visit = await db.doc('visits/v1')
+    .expand(['patient.doctor', 'team', 'scan', 'author'])
+    .get();
+final data = visit.data()!;
+
+final patient = data['patient'] as Link;                  // always a Link
+patient.target;                                           // 'patients/p1'
+patient.data()?['name'];                                  // the patient's fields (expanded)
+(patient.data()?['doctor'] as Link?)?.data()?['name'];    // nested: the patient's own references are links
+for (final member in (data['team'] as List).cast<Link>()) { member.data()?['name']; }
+(data['scan'] as Link).data()?['sizeBytes'];              // a file → its record
+(data['author'] as Link).data()?['displayName'];          // a user → their public profile
+```
+
+- A link's `data()` is null when its target wasn't expanded, is missing, or is hidden from the user by the rules; its
+  `target` is always there.
+- A plain string is never a link, and never expanded: store references as `Link`s.
+- **Models:** `withConverter` works on links and on snapshots, like on references. Writing a `Link` stores its
+  reference, never its data, so a model saves back as it was read:
+
+```dart
+class Visit {
+  Visit.fromMap(Map<String, Object?> m)
+      : patient = (m['patient'] as Link).withConverter(Patient.converter),
+        scan = m['scan'] as Link?;
+  final Link<Patient> patient;
+  final Link? scan;
+  Map<String, Object?> toMap() => {'patient': patient, 'scan': scan};
+}
+visit.patient.data()?.name;
+snapshot.withConverter(Visit.converter).data();   // re-type a snapshot without reading it again
+```
+
+- Paths walk maps, lists (each item) and references: `patient.doctor` is the `doctor` of the `patient`'s document.
+  10 paths, 4 references deep, and the server's expand limit (100 unless it's set otherwise) per read at most;
+  offline, the SDK uses the limit the server last announced.
+- Live: when a linked document, file or user changes, the listener emits a new snapshot (a query's `docChanges` are
+  empty when only linked things changed).
+- **Offline:** document links are followed through the cache (what expanded reads and listeners brought before
+  shows, `fromCache`), with the user's own unsynced writes on them too. Back online, an expanded listener starts with a
+  full snapshot. Files and users: a listener keeps the last the server sent.
+
 ## Real-time listeners
 
 `snapshots()` returns a stream that emits an immediate cache-first snapshot, then
@@ -345,7 +406,7 @@ flowchart TD
   W["local write (latency compensation)"] --> E
 ```
 
-A permanently-failing subscription (`PERMISSION_DENIED` / `UNAUTHENTICATED` /
+A permanently-failing subscription (`permissionDenied` / `unauthenticated` /
 invalid query) surfaces the error on the stream and stops retrying; transient
 drops reconnect silently. Server-side deletions are reconciled into the local
 cache (a deleted document never reappears), and with durable persistence a
@@ -386,7 +447,7 @@ db.syncEvents.listen((e) {
     // ConflictPolicy.manual (default): resolve explicitly
     e.discard(); // or e.retry() / e.overwrite()
   } else if (e is WriteFailed) {
-    // permanent: PERMISSION_DENIED, INVALID_ARGUMENT, INVALID_QUERY, or a
+    // permanent: permissionDenied, invalidArgument (an invalid query too), or a
     // conflict auto-resolution couldn't settle; dropped from the queue.
     // e.writes carries the dropped entries in full — this is the only place
     // they still exist, so capture them here if the work matters.
@@ -409,7 +470,7 @@ final pending = await db.hasPendingWrites;
 await db.clearPersistence();       // wipe local cache + queue
 ```
 
-Conflict handling is governed by `WincheDatabaseConfig.conflictPolicy`:
+Conflict handling is governed by `WincheDatabaseSettings.conflictPolicy`:
 `manual` (default — pause and surface a `WriteConflict` for explicit
 resolution), `clientWins` (replay the local write, last-write-wins), or
 `serverWins` (drop the local write, keep the server's). Under the automatic
@@ -418,8 +479,8 @@ that has since been deleted, which always fails with `NOT_FOUND` — is reported
 as a `WriteFailed` and removed from the queue rather than retried forever.
 
 > **Frame guard:** a batch over 500 writes, or whose serialized frame exceeds
-> `maxFrameBytes` (default 1 MiB), is rejected with `InvalidArgumentException`
-> *before* it enters the queue — so it never loops on the wire.
+> `maxFrameBytes` (default 1 MiB), is rejected with a `WincheDatabaseException`
+> (code `invalidArgument`) *before* it enters the queue — so it never loops on the wire.
 
 ### Batches
 
@@ -455,7 +516,7 @@ final newBalance = await db.runTransaction((tx) async {
 ```dart
 db.connectionState;                 // ConnectionState.ready, .disconnected, ...
 db.connectionStates.listen(...);    // transitions (survives user switches)
-db.reconnects.listen(...);          // fires on each successful reconnect
+await db.verifyConnection();        // ping; replace a dead socket at once
 ```
 
 ```mermaid
@@ -463,7 +524,7 @@ stateDiagram-v2
   [*] --> connecting
   connecting --> ready: welcome
   ready --> disconnected: socket drop
-  disconnected --> reconnecting: autoReconnect
+  disconnected --> reconnecting: automatic
   reconnecting --> ready: welcome
   ready --> disconnected: sign-out / user switch
 ```
@@ -475,11 +536,17 @@ redials on its own once a fresh one is available). There is no `close()` or
 owned by `winche_core`, built the moment an identity signs in and torn down the
 moment it signs out or is replaced.
 
+A socket can die without either side noticing (a network switch, a device
+waking from sleep). Call `db.verifyConnection()` when the app returns to the
+foreground: it pings the server and, with no reply within `timeout` (5 s by
+default), drops the socket so the client reconnects at once. It returns
+whether the connection answered; false when signed out or offline.
+
 ---
 
 ### Streams and user switches
 
-Three streams — `connectionStates`, `syncEvents`, `reconnects` — describe the
+Two streams — `connectionStates` and `syncEvents` — describe the
 *connection*, not any particular user's data, so they **survive** a sign-out or
 a user switch: they go quiet (`connectionStates` emits
 `ConnectionState.disconnected`) rather than ending. A connection banner or a
@@ -499,22 +566,32 @@ old `snapshots()` subscription and starts a new one.
 
 ---
 
-Operations throw a `WincheProtocolException` subclass on failure:
-`PermissionDeniedException`, `UnauthenticatedException`, `NotFoundException`,
-`AlreadyExistsException`, `FailedPreconditionException`, `AbortedException`,
-`InvalidQueryException` (with `jsonPath` / `code`), `InvalidArgumentException`,
-`DeadlineExceededException`, `InternalException`, `UnavailableException`.
+Operations throw a `WincheDatabaseException` on failure: a `WincheException` with a `code` from the list every Winche
+package shares (`WincheErrorCode`), a `message`, the server's `reason` when it sent a more precise one
+(`WincheDatabaseException.invalidQuery` for a query that doesn't parse or validate) and its `details` (`jsonPath`, a
+plan-validation `code`, an `errorId`).
 
-`WincheProtocolException` extends `WincheException`, core's root for the whole
-stack. Catch the former for "the database backend rejected this" and the latter
-for "any Winche SDK failed" — they are different questions, and the narrower
-one is usually the one you want.
+```dart
+try {
+  await db.doc('users/u1').get();
+} on WincheDatabaseException catch (e) {
+  switch (e.code) {
+    case WincheErrorCode.permissionDenied: showNotAllowed();
+    case WincheErrorCode.notFound: showMissing();
+    default: if (e.isTransient) retryLater();   // unavailable, deadlineExceeded, aborted, resourceExhausted
+  }
+}
+```
+
+Catch `WincheDatabaseException` for "the database rejected this", `WincheException` for "any Winche SDK failed". The
+7.x names (`WincheProtocolException`, `PermissionDeniedException`, `NotFoundException`, …, and `status`) still work,
+deprecated, until the next major version.
 
 Calling anything before sign-in, or after a sign-out, throws
 `WincheUnboundException` instead — see
 [What throws while nobody is signed in](#what-throws-while-nobody-is-signed-in).
-It is a `WincheException` but not a `WincheProtocolException`, so
-`on WincheProtocolException` will not catch it.
+It is a `WincheException` but not a `WincheDatabaseException`, so
+`on WincheDatabaseException` will not catch it.
 
 ---
 
@@ -528,7 +605,7 @@ IndexedDB):
 ```dart
 Winche.initializeApp(
   options: WincheOptions(
-    databaseEndpoint: uri,
+    endpoints: {'database': uri},
     directoryResolver: () async =>
         (await getApplicationDocumentsDirectory()).path,
   ),
@@ -555,11 +632,38 @@ package — are flattened into one IndexedDB database name,
 `winche_<storageKey>_database`.
 
 For a non-durable in-memory store (state lost on exit), set `inMemory: true` on
-`WincheDatabaseConfig` (then `directoryResolver` is never consulted):
+`WincheDatabaseSettings` (then `directoryResolver` is never consulted):
 
 ```dart
-db.config = const WincheDatabaseConfig(inMemory: true);
+db.settings = const WincheDatabaseSettings(inMemory: true);
 ```
+
+---
+
+## Signed-out access
+
+By default the database is bound to whoever is signed in, and throws
+`WincheUnboundException` while nobody is. To read (or write) as a signed-out
+caller — public data, or an app with no sign-in at all:
+
+```dart
+db.settings = const WincheDatabaseSettings(allowSignedOut: true);
+```
+
+Requests then go without a token, and the server's rules decide what a
+signed-out caller may do:
+
+```
+match public/{doc} {
+  allow read: if true;                       // anyone
+  allow write: if request.auth != null;      // signed-in users
+}
+```
+
+The signed-out session caches in memory only (nothing on disk is shared with a
+user's cache), and it ends when someone signs in: its streams complete, as on
+any user switch, so resubscribe on `authStateChanges`. No auth service is
+needed for this — `WincheDatabase` works with none registered.
 
 ---
 
@@ -592,7 +696,7 @@ its next read (deleted documents stay tombstoned). A configured cap is also
 enforced against already-persisted documents on startup.
 
 ```dart
-db.config = const WincheDatabaseConfig(
+db.settings = const WincheDatabaseSettings(
   cacheSizeBytes: 50 * 1024 * 1024,   // ~50 MiB cap (or maxCachedDocuments: 10000)
 );
 ```
