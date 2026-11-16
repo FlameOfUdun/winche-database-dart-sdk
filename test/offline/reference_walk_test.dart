@@ -11,7 +11,7 @@ WireDocument doc(String path, Map<String, Value> fields) => WireDocument(
 void main() {
   test('the walk stops at the limit the server announced', () async {
     final targets = [for (var i = 0; i < 5; i++) doc('t/t$i', {'n': IntegerValue(i)})];
-    final root = doc('r/root', {'all': ArrayValue([for (final t in targets) ReferenceValue(t.path)])});
+    final root = doc('r/root', {'all': ArrayValue([for (final t in targets) DocumentReferenceValue(t.path)])});
     Future<WireDocument?> resolve(String p) async => targets.firstWhere((t) => t.path == p);
 
     expect((await walkReferences([root], [parseExpandPath('all')], resolve)).length, 5);

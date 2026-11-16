@@ -4,7 +4,7 @@ import 'package:winche_database/winche_database.dart';
 
 import 'facade_harness.dart';
 
-Map<String, Object?> ref(String path) => {'docRefValue': path};
+Map<String, Object?> ref(String path) => {'documentReferenceValue': path};
 
 class Patient {
   Patient.fromMap(Map<String, Object?> m) : name = m['name'] as String, doctor = m['doctor'] as Link<Map<String, Object?>>?;
@@ -88,7 +88,7 @@ void main() {
     await pump(20);   // the write goes out from the queue
     final write = h.requests.lastWhere((f) => f['type'] == 'write');
     final fields = ((write['writes'] as List).single as Map)['set']['fields'] as Map;
-    expect(fields['patient'], {'docRefValue': 'patients/p1'}, reason: 'the target, not the data');
+    expect(fields['patient'], {'documentReferenceValue': 'patients/p1'}, reason: 'the target, not the data');
   });
 
   test('without expand, references are links without data', () async {
@@ -242,12 +242,12 @@ void main() {
 
   group('files and users', () {
     final withLinks = wireDoc('visits/v2', {
-      'scan': {'fileRefValue': 'scans/a.png'},
-      'other': {'fileRefValue': 'scans/hidden.png'},
+      'scan': {'fileReferenceValue': 'scans/a.png'},
+      'other': {'fileReferenceValue': 'scans/hidden.png'},
       'label': {'stringValue': 'scans/a.png'},
       'patient': ref('patients/p2'),
     });
-    final patient2 = wireDoc('patients/p2', {'name': {'stringValue': 'Ann'}, 'author': {'userRefValue': 'u1'}});
+    final patient2 = wireDoc('patients/p2', {'name': {'stringValue': 'Ann'}, 'author': {'userReferenceValue': 'u1'}});
     final scanRecord = {'path': 'scans/a.png', 'mimeType': 'image/png', 'sizeBytes': 42};
 
     test('file and user references are always links, with data when expanded', () async {
@@ -315,8 +315,8 @@ void main() {
     await pump(20);
     final write = h.requests.lastWhere((f) => f['type'] == 'write');
     final fields = ((write['writes'] as List).single as Map)['set']['fields'] as Map;
-    expect(fields['visit'], {'docRefValue': 'visits/v1'});
-    expect(fields['scan'], {'fileRefValue': 'scans/a.png'});
-    expect(fields['by'], {'userRefValue': 'u9'});
+    expect(fields['visit'], {'documentReferenceValue': 'visits/v1'});
+    expect(fields['scan'], {'fileReferenceValue': 'scans/a.png'});
+    expect(fields['by'], {'userReferenceValue': 'u9'});
   });
 }

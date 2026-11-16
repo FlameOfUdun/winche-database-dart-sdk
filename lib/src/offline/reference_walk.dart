@@ -54,7 +54,7 @@ Future<Map<String, WireDocument>> walkReferences(
 // File and user references are resolved by the server only: nothing to follow here.
 void _walk(Value value, List<String> segments, int i, List<(String, List<String>)> out) {
   switch (value) {
-    case ReferenceValue(:final path):
+    case DocumentReferenceValue(:final path):
       final target = path.startsWith('/') ? path.substring(1) : path;
       if (target.split('/').length.isEven) out.add((target, segments.sublist(i)));
     case ArrayValue(:final elements):

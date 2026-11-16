@@ -17,7 +17,7 @@ void main() {
       const StringValue('a'),
       const StringValue('b'),
       BytesValue(Uint8List.fromList([1])),
-      const ReferenceValue('users/a'),
+      const DocumentReferenceValue('users/a'),
       const GeoPointValue(1.0, 2.0),
       const ArrayValue([IntegerValue(1)]),
       const MapValue({'a': IntegerValue(1)}),

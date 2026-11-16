@@ -4,10 +4,10 @@ import '../core/values.dart';
 import '../protocol/messages.dart';
 
 /// Resolves [field] against [doc]. The pseudo-field `__name__` resolves to the
-/// document path as a [ReferenceValue] (PROTOCOL §2.3); all other fields resolve
+/// document path as a [DocumentReferenceValue] (PROTOCOL §2.3); all other fields resolve
 /// through the document's field map.
 Value? resolveField(WireDocument doc, String field) {
-  if (field == '__name__') return ReferenceValue(doc.path);
+  if (field == '__name__') return DocumentReferenceValue(doc.path);
   return resolvePath(doc.fields, field);
 }
 
@@ -109,16 +109,16 @@ bool _matchField(WireDocument doc, String field, String op, Value operand) {
   }
 }
 
-/// For the `__name__` pseudo-field, document paths resolve to [ReferenceValue],
+/// For the `__name__` pseudo-field, document paths resolve to [DocumentReferenceValue],
 /// but user operands arrive as [StringValue] (or an array of them). Normalize
 /// the operand to references so equality/membership comparisons line up.
 Value _normalizeNameOperand(String field, Value operand) {
   if (field != '__name__') return operand;
-  if (operand is StringValue) return ReferenceValue(operand.value);
+  if (operand is StringValue) return DocumentReferenceValue(operand.value);
   if (operand is ArrayValue) {
     return ArrayValue([
       for (final e in operand.elements)
-        e is StringValue ? ReferenceValue(e.value) : e,
+        e is StringValue ? DocumentReferenceValue(e.value) : e,
     ]);
   }
   return operand;

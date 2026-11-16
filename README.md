@@ -324,7 +324,7 @@ final recent = await db.collectionGroup('sessionHistory')
 A reference field reads back as a **`Link`**: `kind` (`LinkKind.document`, `.file` or `.user`), `target` (the
 document path, file path or uid) and `data()`, which is null unless the read **expanded** it. Write references with
 `Link.document('patients/p1')` (or a `DocumentReference`), `Link.file('scans/a.png')` and `Link.user(uid)`; they're
-stored typed (`docRefValue`, `fileRefValue`, `userRefValue`), which is how the server knows what to resolve:
+stored typed (`documentReferenceValue`, `fileReferenceValue`, `userReferenceValue`), which is how the server knows what to resolve:
 
 ```dart
 await db.doc('visits/v1').set({

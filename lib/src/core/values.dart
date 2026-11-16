@@ -110,17 +110,17 @@ sealed class Value {
         }
         return BytesValue(bytes);
 
-      case 'docRefValue':
-      case 'fileRefValue':
-      case 'userRefValue':
+      case 'documentReferenceValue':
+      case 'fileReferenceValue':
+      case 'userReferenceValue':
         if (payload is! String) {
           throw FormatException(
               '$tag payload must be a string, got: ${payload.runtimeType}');
         }
         return switch (tag) {
-          'fileRefValue' => FileRefValue(payload),
-          'userRefValue' => UserRefValue(payload),
-          _ => ReferenceValue(payload),
+          'fileReferenceValue' => FileReferenceValue(payload),
+          'userReferenceValue' => UserReferenceValue(payload),
+          _ => DocumentReferenceValue(payload),
         };
 
       case 'geoPointValue':
@@ -379,62 +379,62 @@ final class BytesValue extends Value {
   String toString() => 'BytesValue(${base64.encode(value)})';
 }
 
-/// `{"docRefValue": "collection/id"}`: a reference to a document, by path.
-final class ReferenceValue extends Value {
-  const ReferenceValue(this.path);
+/// `{"documentReferenceValue": "collection/id"}`: a reference to a document, by path.
+final class DocumentReferenceValue extends Value {
+  const DocumentReferenceValue(this.path);
 
   final String path;
 
   @override
-  Object toJson() => {'docRefValue': path};
+  Object toJson() => {'documentReferenceValue': path};
 
   @override
   bool operator ==(Object other) =>
-      other is ReferenceValue && other.path == path;
+      other is DocumentReferenceValue && other.path == path;
 
   @override
-  int get hashCode => Object.hash(ReferenceValue, path);
+  int get hashCode => Object.hash(DocumentReferenceValue, path);
 
   @override
-  String toString() => 'ReferenceValue($path)';
+  String toString() => 'DocumentReferenceValue($path)';
 }
 
-/// `{"fileRefValue": "scans/a.png"}`: a reference to a file in Winche Storage.
-final class FileRefValue extends Value {
-  const FileRefValue(this.path);
+/// `{"fileReferenceValue": "scans/a.png"}`: a reference to a file in Winche Storage.
+final class FileReferenceValue extends Value {
+  const FileReferenceValue(this.path);
 
   final String path;
 
   @override
-  Object toJson() => {'fileRefValue': path};
+  Object toJson() => {'fileReferenceValue': path};
 
   @override
-  bool operator ==(Object other) => other is FileRefValue && other.path == path;
+  bool operator ==(Object other) => other is FileReferenceValue && other.path == path;
 
   @override
-  int get hashCode => Object.hash(FileRefValue, path);
+  int get hashCode => Object.hash(FileReferenceValue, path);
 
   @override
-  String toString() => 'FileRefValue($path)';
+  String toString() => 'FileReferenceValue($path)';
 }
 
-/// `{"userRefValue": "uid"}`: a reference to a Winche Auth user.
-final class UserRefValue extends Value {
-  const UserRefValue(this.uid);
+/// `{"userReferenceValue": "uid"}`: a reference to a Winche Auth user.
+final class UserReferenceValue extends Value {
+  const UserReferenceValue(this.uid);
 
   final String uid;
 
   @override
-  Object toJson() => {'userRefValue': uid};
+  Object toJson() => {'userReferenceValue': uid};
 
   @override
-  bool operator ==(Object other) => other is UserRefValue && other.uid == uid;
+  bool operator ==(Object other) => other is UserReferenceValue && other.uid == uid;
 
   @override
-  int get hashCode => Object.hash(UserRefValue, uid);
+  int get hashCode => Object.hash(UserReferenceValue, uid);
 
   @override
-  String toString() => 'UserRefValue($uid)';
+  String toString() => 'UserReferenceValue($uid)';
 }
 
 /// `{"geoPointValue": {"latitude": <number>, "longitude": <number>}}`

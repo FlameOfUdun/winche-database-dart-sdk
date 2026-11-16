@@ -1,7 +1,7 @@
 part of '../../winche_database.dart';
 
 // Forward declaration — DocumentReference is defined in references.dart.
-// We need its path for ReferenceValue encoding.
+// We need its path for DocumentReferenceValue encoding.
 // To avoid a circular import, we expose a public interface here that
 // DocumentReference implements.
 
@@ -39,7 +39,7 @@ void _assertNoDot(String key, {required String keyPath}) {
 /// - `DateTime` → [TimestampValue] (UTC)
 /// - `Uint8List` → [BytesValue]
 /// - [GeoPoint] → [GeoPointValue]
-/// - An object with a `.path` (i.e. `DocumentReference`) → [ReferenceValue]
+/// - An object with a `.path` (i.e. `DocumentReference`) → [DocumentReferenceValue]
 /// - `List` → [ArrayValue] (recursive; [FieldValue] sentinels inside lists are
 ///   rejected with [ArgumentError])
 /// - `Map<String, dynamic>` → [MapValue] (recursive; sentinels at any depth
@@ -65,15 +65,15 @@ Value toValue(Object? obj, {String keyPath = ''}) {
 
   if (obj is GeoPoint) return GeoPointValue(obj.latitude, obj.longitude);
 
-  // DocumentReference fields become document references (docRefValue).
-  if (obj is DocumentReference) return ReferenceValue(obj.path);
+  // DocumentReference fields become document references (documentReferenceValue).
+  if (obj is DocumentReference) return DocumentReferenceValue(obj.path);
 
   // A Link stores what it points at, never its data.
   if (obj is Link) {
     return switch (obj.kind) {
-      LinkKind.document => ReferenceValue(obj.target),
-      LinkKind.file => FileRefValue(obj.target),
-      LinkKind.user => UserRefValue(obj.target),
+      LinkKind.document => DocumentReferenceValue(obj.target),
+      LinkKind.file => FileReferenceValue(obj.target),
+      LinkKind.user => UserReferenceValue(obj.target),
     };
   }
 
@@ -126,7 +126,7 @@ Value _toValueInList(Object? obj, {required String keyPath}) {
 /// - [StringValue] → `String`
 /// - [BytesValue] → `Uint8List`
 /// - [GeoPointValue] → [GeoPoint]
-/// - [ReferenceValue] → calls [refFromPath] to create a `DocumentReference`
+/// - [DocumentReferenceValue] → calls [refFromPath] to create a `DocumentReference`
 /// - [ArrayValue] → `List<Object?>`
 /// - [MapValue] → `Map<String, Object?>`
 /// - [DeleteFieldValue] → [ArgumentError] (write-time sentinel, not a read
@@ -142,9 +142,9 @@ Object? fromValue(Value value) {
     BytesValue(:final value) => value,
     GeoPointValue(:final latitude, :final longitude) =>
       GeoPoint(latitude, longitude),
-    ReferenceValue(:final path) => path,
-    FileRefValue(:final path) => path,
-    UserRefValue(:final uid) => uid,
+    DocumentReferenceValue(:final path) => path,
+    FileReferenceValue(:final path) => path,
+    UserReferenceValue(:final uid) => uid,
     ArrayValue(:final elements) => [for (final e in elements) fromValue(e)],
     MapValue(:final fields) => {
         for (final entry in fields.entries) entry.key: fromValue(entry.value),

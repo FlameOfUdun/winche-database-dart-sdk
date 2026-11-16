@@ -197,9 +197,9 @@ final class DocumentSnapshot<T> {
 
   /// [value] as native data, with references as [Link]s; [paths] is what's left of each expand path here.
   Object? _native(Value value, List<ExpandPath> paths) => switch (value) {
-        ReferenceValue(:final path) => _documentLink(path, paths),
-        FileRefValue(:final path) => _resolvedLink(LinkKind.file, path, paths),
-        UserRefValue(:final uid) => _resolvedLink(LinkKind.user, uid, paths),
+        DocumentReferenceValue(:final path) => _documentLink(path, paths),
+        FileReferenceValue(:final path) => _resolvedLink(LinkKind.file, path, paths),
+        UserReferenceValue(:final uid) => _resolvedLink(LinkKind.user, uid, paths),
         ArrayValue(:final elements) => [for (final e in elements) _native(e, paths)],
         MapValue(:final fields) => {for (final e in fields.entries) e.key: _native(e.value, _below(paths, e.key))},
         _ => fromValue(value),
@@ -324,13 +324,13 @@ class QuerySnapshot<T> {
 
 /// What a [Link] points at.
 enum LinkKind {
-  /// Another document (`docRefValue`).
+  /// Another document (`documentReferenceValue`).
   document,
 
-  /// A file in Winche Storage (`fileRefValue`).
+  /// A file in Winche Storage (`fileReferenceValue`).
   file,
 
-  /// A Winche Auth user (`userRefValue`).
+  /// A Winche Auth user (`userReferenceValue`).
   user,
 }
 

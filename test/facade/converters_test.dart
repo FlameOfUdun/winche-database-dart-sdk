@@ -143,8 +143,8 @@ void main() {
           fromValue(const GeoPointValue(3.0, 4.0)), const GeoPoint(3.0, 4.0));
     });
 
-    test('ReferenceValue → path string', () {
-      expect(fromValue(const ReferenceValue('users/u1')), 'users/u1');
+    test('DocumentReferenceValue → path string', () {
+      expect(fromValue(const DocumentReferenceValue('users/u1')), 'users/u1');
     });
 
     test('ArrayValue → List', () {

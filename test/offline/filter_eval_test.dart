@@ -18,7 +18,7 @@ bool match(WireDocument d, FilterSpec f) => matchesFilter(d, f.toJson());
 void main() {
   test('resolveField maps __name__ to the document reference', () {
     expect(
-        resolveField(doc(const {}), '__name__'), const ReferenceValue('c/d'));
+        resolveField(doc(const {}), '__name__'), const DocumentReferenceValue('c/d'));
   });
 
   final alice = doc({
