@@ -30,6 +30,23 @@ For the authoritative wire-protocol specification, see the server repository's
 
 ---
 
+## Installation
+
+```bash
+dart pub add winche_core winche_database
+```
+
+Or add them to `pubspec.yaml`:
+
+```yaml
+dependencies:
+  winche_core: ^1.0.0
+  winche_database: ^8.0.0
+```
+
+`winche_core` is not optional. It owns the app, the endpoints and the session every Winche package binds to, so an
+app always imports it directly.
+
 ## Architecture
 
 Offline support is always on. Reads return the **effective view** (the confirmed
