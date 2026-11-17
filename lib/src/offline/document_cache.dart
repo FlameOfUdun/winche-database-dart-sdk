@@ -36,8 +36,23 @@ class DocumentCache {
     await ev.evictIfNeeded();
   }
 
-  /// Stores a server-confirmed document.
+  /// Whether [incoming] is older than what the cache already holds for its
+  /// path (a live document or a tombstone): a server read computed before a
+  /// write of ours, answered after its ack. Storing it would put the document
+  /// back to before our write, and our next write's `updateTime` precondition
+  /// (taken from the cache) would then be refused.
+  Future<bool> _isStale(WireDocument incoming) async {
+    final rec = await store.getDocument(incoming.path);
+    if (rec == null) return false;
+    final held = DateTime.tryParse(CachedDocument.fromRecord(rec).updateTime);
+    final next = DateTime.tryParse(incoming.updateTime);
+    return held != null && next != null && next.isBefore(held);
+  }
+
+  /// Stores a server-confirmed document, unless the cache already holds a
+  /// newer state of it.
   Future<void> putConfirmed(WireDocument doc) async {
+    if (await _isStale(doc)) return;
     // Prime BEFORE writing so startup priming can only evict pre-existing docs —
     // never the doc we are about to write (which then survives at the MRU end).
     if (_eviction != null) await _ensurePrimed();
@@ -52,9 +67,12 @@ class DocumentCache {
   /// Stores many server-confirmed documents, running a SINGLE eviction pass after
   /// all writes (instead of one per document) — so a bulk write-through computes
   /// the pinned set / scans the pending queue once, not per doc.
+  /// Like [putConfirmed], each document is skipped when the cache holds a newer
+  /// state of it.
   Future<void> putConfirmedAll(Iterable<WireDocument> docs) async {
     if (_eviction != null) await _ensurePrimed();
     for (final doc in docs) {
+      if (await _isStale(doc)) continue;
       final record = CachedDocument.live(doc).toRecord();
       await store.putDocument(doc.path, record);
       _eviction?.recordAccess(doc.path, _sizeOf(record));

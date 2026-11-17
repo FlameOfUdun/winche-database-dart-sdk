@@ -96,4 +96,37 @@ void main() {
     expect(await cache.confirmed('c/a'), isNotNull,
         reason: 'the just-written doc must survive startup priming eviction');
   });
+
+  group('never goes back in time', () {
+    test('a read computed before our write, answered after its ack, is ignored', () async {
+      // Our write's ack: the server's format, +00:00 and trimmed digits.
+      await cache.putConfirmed(wire('t/a', {'logo': const StringValue('new').toJson()},
+          updateTime: '2026-11-17T18:31:21.542507+00:00'));
+      // The list read sent just before it, answered just after.
+      await cache.putConfirmedAll([
+        wire('t/a', {'logo': const StringValue('old').toJson()}, updateTime: '2026-11-17T18:31:14.16Z'),
+        wire('t/b', const {}, updateTime: '2026-11-17T18:31:14.16Z'),
+      ]);
+      final a = await cache.confirmed('t/a');
+      expect(a!.updateTime, '2026-11-17T18:31:21.542507+00:00');
+      expect(a.fields['logo'], const StringValue('new'));
+      expect(await cache.confirmed('t/b'), isNotNull); // the others are stored
+    });
+
+    test('a later or equal state replaces it', () async {
+      await cache.putConfirmed(wire('t/a', {'n': const IntegerValue(1).toJson()}, updateTime: '2026-11-17T18:00:00+00:00'));
+      await cache.putConfirmed(wire('t/a', {'n': const IntegerValue(2).toJson()}, updateTime: '2026-11-17T18:00:00Z'));
+      expect((await cache.confirmed('t/a'))!.fields['n'], const IntegerValue(2));
+      await cache.putConfirmed(wire('t/a', {'n': const IntegerValue(3).toJson()}, updateTime: '2026-11-17T18:00:00.000001+00:00'));
+      expect((await cache.confirmed('t/a'))!.fields['n'], const IntegerValue(3));
+    });
+
+    test('a document deleted after the read stays deleted', () async {
+      await cache.putConfirmedDeleted('t/a', '2026-11-17T18:31:48.858+00:00');
+      await cache.putConfirmed(wire('t/a', const {}, updateTime: '2026-11-17T18:31:45.8+00:00'));
+      expect(await cache.isKnownAbsent('t/a'), isTrue);
+      await cache.putConfirmed(wire('t/a', const {}, updateTime: '2026-11-17T18:40:00+00:00')); // made again
+      expect(await cache.confirmed('t/a'), isNotNull);
+    });
+  });
 }

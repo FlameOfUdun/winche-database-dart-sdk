@@ -1,5 +1,13 @@
 # Changelog
 
+## 8.0.1
+
+**Fix: a read answered after one of your writes no longer puts the cache back to before it.** A read sent just before a
+write (a list refreshed right after `set()`, which returns before the server has the write) can be answered after the
+write's acknowledgement, with the document as it was. The cache stored it, so the next write's `updateTime`
+precondition, taken from the cache, was refused once (and replayed), and offline reads showed the old document until
+the next read. The cache now keeps whichever state of a document is later.
+
 ## 8.0.0
 
 On `winche_core` 1.0. Also contains 7.3.0, which was not released.
