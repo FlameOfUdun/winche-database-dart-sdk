@@ -36,7 +36,12 @@ final class ConnectionConfig {
     this.maxFrameBytes = 1 << 20,
     this.channelFactory,
     this.sleeper,
+    this.dialUri,
   });
+
+  /// Rewrites the address on every (re)dial, after the auth token is added:
+  /// the app's Integrity token (`WincheIntegrity.withToken`), fresh each time.
+  final Future<Uri> Function(Uri)? dialUri;
 
   /// The WebSocket URI, e.g. `ws://host/documents/ws`.
   final Uri uri;
@@ -170,11 +175,13 @@ class ProtocolConnection {
   /// in-band hello/auth message).
   FutureOr<Uri> _dialUri() async {
     final token = await config.tokenProvider?.call();
-    if (token == null) return config.uri;
-    return config.uri.replace(queryParameters: {
-      ...config.uri.queryParameters,
-      'access_token': token,
-    });
+    final uri = token == null
+        ? config.uri
+        : config.uri.replace(queryParameters: {
+            ...config.uri.queryParameters,
+            'access_token': token,
+          });
+    return config.dialUri == null ? uri : await config.dialUri!(uri);
   }
 
   /// Dials and completes the handshake.

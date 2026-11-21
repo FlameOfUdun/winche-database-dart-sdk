@@ -356,6 +356,27 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  test('every dial passes its address through dialUri (the Integrity token), after access_token', () async {
+    final dialed = <Uri>[];
+    final fake = FakeChannel();
+    var n = 0;
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
+      tokenProvider: () => 'tok-123',
+      dialUri: (uri) async => uri.replace(queryParameters: {...uri.queryParameters, 'winche_integrity': 'wit1.${++n}'}),
+      channelFactory: (uri) {
+        dialed.add(uri);
+        return fake;
+      },
+      pingInterval: const Duration(hours: 1),
+    ));
+    final connected = conn.connect();
+    fake.serverSend({'type': 'welcome', 'connectionId': 'c1'});
+    await connected;
+    expect(dialed.single.queryParameters, {'access_token': 'tok-123', 'winche_integrity': 'wit1.1'});
+    await conn.close();
+  });
+
   // New — connect appends access_token and sends no hello
   // ---------------------------------------------------------------------------
   test('connect appends access_token to the dial URI and sends no hello',

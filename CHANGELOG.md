@@ -1,5 +1,11 @@
 # Changelog
 
+## 8.1.0
+
+**Integrity.** The live connection carries the app's Integrity token (`winche_integrity` in its address, fresh on every
+reconnect), so a project that enforces Integrity on the database lets the app in. Set it up with
+`app.useIntegrity(…)` (winche_core 1.1.0, now the minimum).
+
 ## 8.0.1
 
 **Fix: a read answered after one of your writes no longer puts the cache back to before it.** A read sent just before a
