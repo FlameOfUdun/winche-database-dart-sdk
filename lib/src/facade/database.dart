@@ -194,7 +194,9 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
     await _bind(
       ConnectionConfig(
         uri: endpoint,
-        dialUri: app.integrity.withToken,   // the app's Integrity token, fresh on every (re)dial
+        // The app's Integrity token, fresh on every (re)dial: a header, or in the address in a browser.
+        dialHeaders: webSocketHeadersSupported ? app.integrity.webSocketHeaders : null,
+        dialUri: webSocketHeadersSupported ? null : app.integrity.withToken,
         tokenProvider: () async {
           final token = await session.token();
           if (token == null) {
@@ -353,7 +355,9 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
     unawaited(_bind(
       ConnectionConfig(
         uri: endpoint,
-        dialUri: app.integrity.withToken,   // the app's Integrity token, fresh on every (re)dial
+        // The app's Integrity token, fresh on every (re)dial: a header, or in the address in a browser.
+        dialHeaders: webSocketHeadersSupported ? app.integrity.webSocketHeaders : null,
+        dialUri: webSocketHeadersSupported ? null : app.integrity.withToken,
         pingInterval: _config.pingInterval,
         requestTimeout: _config.requestTimeout,
         maxBackoff: _config.maxBackoff,

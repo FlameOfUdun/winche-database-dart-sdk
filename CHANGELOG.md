@@ -2,9 +2,13 @@
 
 ## 8.1.0
 
-**Integrity.** The live connection carries the app's Integrity token (`winche_integrity` in its address, fresh on every
-reconnect), so a project that enforces Integrity on the database lets the app in. Set it up with
-`app.useIntegrity(…)` (winche_core 1.1.0, now the minimum).
+**Integrity.** The live connection carries the app's Integrity token (the `X-Winche-Integrity` header when it opens;
+in a browser, which can't set it, `winche_integrity` in its address), fresh on every reconnect, so a project that
+enforces Integrity on the database lets the app in. Set it up with `app.useIntegrity(…)` (winche_core 1.1.0, now the
+minimum).
+
+**Fix: no tokens in error messages.** A failed dial's error (`Connection to '…' was not upgraded`) no longer includes
+the address's query, so the access and Integrity tokens don't reach logs.
 
 ## 8.0.1
 

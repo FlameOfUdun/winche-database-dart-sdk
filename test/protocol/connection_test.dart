@@ -377,6 +377,52 @@ void main() {
     await conn.close();
   });
 
+  test('every dial sends dialHeaders (the Integrity token), fresh each time, and keeps it out of the address', () async {
+    final dialed = <(Uri, Map<String, String>)>[];
+    final fake = FakeChannel();
+    var n = 0;
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
+      tokenProvider: () => 'tok-123',
+      dialHeaders: () async => {'X-Winche-Integrity': 'wit1.${++n}'},
+      dialer: (uri, headers) {
+        dialed.add((uri, headers));
+        return fake;
+      },
+      pingInterval: const Duration(hours: 1),
+    ));
+    final connected = conn.connect();
+    fake.serverSend({'type': 'welcome', 'connectionId': 'c1'});
+    await connected;
+    expect(dialed.single.$1.queryParameters, {'access_token': 'tok-123'});
+    expect(dialed.single.$2, {'X-Winche-Integrity': 'wit1.1'});
+    await conn.close();
+  });
+
+  test("a failed dial's error keeps the address but not its query (no tokens in logs)", () async {
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('wss://api.example.com/documents/v1/ws'),
+      tokenProvider: () => 'tok-secret',
+      dialUri: (uri) async => uri.replace(queryParameters: {...uri.queryParameters, 'winche_integrity': 'wit-secret'}),
+      channelFactory: (uri) => throw Exception("Connection to '$uri' was not upgraded to websocket"),
+      sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+      pingInterval: const Duration(hours: 1),
+    ));
+    Object? error;
+    try {
+      await conn.connect();
+    } catch (e) {
+      error = e;
+    }
+    await conn.close();
+    expect(error, isA<WincheDatabaseException>());
+    final message = error.toString();
+    expect(message, contains("wss://api.example.com/documents/v1/ws'"));
+    expect(message, isNot(contains('secret')));
+    expect(message, isNot(contains('access_token')));
+    expect(ProtocolConnection.redacted('at https://h/x?a=1#f and ws://h/y'), 'at https://h/x and ws://h/y');
+  });
+
   // New — connect appends access_token and sends no hello
   // ---------------------------------------------------------------------------
   test('connect appends access_token to the dial URI and sends no hello',

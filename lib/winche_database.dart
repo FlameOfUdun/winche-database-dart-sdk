@@ -33,6 +33,7 @@ import 'src/protocol/connection.dart';
 import 'src/protocol/exceptions.dart';
 import 'src/protocol/messages.dart';
 import 'src/protocol/query_spec.dart';
+import 'src/protocol/web_socket_dial.dart' show webSocketHeadersSupported;
 import 'src/protocol/aggregate.dart';
 import 'src/core/backoff.dart';
 import 'src/core/paths.dart';

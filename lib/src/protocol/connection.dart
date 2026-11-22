@@ -6,6 +6,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'exceptions.dart';
 import 'messages.dart';
+import 'web_socket_dial.dart';
 
 /// Connection lifecycle state.
 enum ConnectionState {
@@ -35,13 +36,21 @@ final class ConnectionConfig {
     this.maxBackoff = const Duration(seconds: 30),
     this.maxFrameBytes = 1 << 20,
     this.channelFactory,
+    this.dialer,
     this.sleeper,
     this.dialUri,
+    this.dialHeaders,
   });
 
   /// Rewrites the address on every (re)dial, after the auth token is added:
-  /// the app's Integrity token (`WincheIntegrity.withToken`), fresh each time.
+  /// in a browser, the app's Integrity token (`WincheIntegrity.withToken`),
+  /// fresh each time.
   final Future<Uri> Function(Uri)? dialUri;
+
+  /// Headers sent on every (re)dial where the platform can (not in a browser):
+  /// the app's Integrity token (`WincheIntegrity.webSocketHeaders`), fresh each
+  /// time.
+  final Future<Map<String, String>> Function()? dialHeaders;
 
   /// The WebSocket URI, e.g. `ws://host/documents/ws`.
   final Uri uri;
@@ -79,6 +88,9 @@ final class ConnectionConfig {
   /// For testing: allows injecting a custom WebSocketChannel factory.
   final FutureOr<WebSocketChannel> Function(Uri)? channelFactory;
 
+  /// For testing: like [channelFactory], also given the dial's headers.
+  final FutureOr<WebSocketChannel> Function(Uri, Map<String, String>)? dialer;
+
   /// For testing: allows injecting a custom sleeper for backoff delays.
   final FutureOr<void> Function(Duration)? sleeper;
 }
@@ -89,15 +101,16 @@ class ProtocolConnection {
   int? expandLimit;
 
   ProtocolConnection(this.config)
-      : _channelFactory = config.channelFactory ?? _defaultFactory,
+      : _channelFactory = config.dialer ??
+            (config.channelFactory == null ? _defaultFactory : (uri, _) => config.channelFactory!(uri)),
         _sleeper = config.sleeper ?? _defaultSleeper;
 
   final ConnectionConfig config;
-  final FutureOr<WebSocketChannel> Function(Uri) _channelFactory;
+  final FutureOr<WebSocketChannel> Function(Uri, Map<String, String>) _channelFactory;
   final FutureOr<void> Function(Duration) _sleeper;
 
-  static Future<WebSocketChannel> _defaultFactory(Uri uri) async {
-    final channel = WebSocketChannel.connect(uri);
+  static Future<WebSocketChannel> _defaultFactory(Uri uri, Map<String, String> headers) async {
+    final channel = connectWebSocket(uri, headers);
     // Suppress unhandled errors on the `ready` future.  If the connection
     // fails, the error surfaces both here and via the channel stream (where our
     // listener handles it with `_onError` / `_onDone`).  Without this ignore
@@ -184,6 +197,19 @@ class ProtocolConnection {
     return config.dialUri == null ? uri : await config.dialUri!(uri);
   }
 
+  /// Opens a channel to the dial URI with the dial headers.
+  Future<WebSocketChannel> _dial() async {
+    final uri = await _dialUri();
+    final headers = await config.dialHeaders?.call() ?? const <String, String>{};
+    return _channelFactory(uri, headers);
+  }
+
+  /// [error] as text with the query taken off any address in it: a failed
+  /// dial's message (dart:io's "Connection to '…' was not upgraded") would
+  /// otherwise carry the access and Integrity tokens into logs.
+  static String redacted(Object error) =>
+      error.toString().replaceAllMapped(RegExp(r'''((?:wss?|https?)://[^\s'"?#]*)[?#][^\s'"]*'''), (m) => m[1]!);
+
   /// Dials and completes the handshake.
   ///
   /// Rethrows the failure to its caller — `request()` depends on that to surface
@@ -208,13 +234,13 @@ class ProtocolConnection {
   /// The first dial + handshake. Leaves state transitions to [connect].
   Future<void> _initialDial(Duration welcomeTimeout) async {
     try {
-      _channel = await _channelFactory(await _dialUri());
+      _channel = await _dial();
     } catch (e) {
       // Channel factory threw (e.g. WebSocketChannelException on Windows when
       // the remote port is refused before the stream is even subscribed to).
       // Normalise to `unavailable` so callers don't need to know about
       // transport-layer exception types.
-      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
+      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: ${redacted(e)}');
     }
     _sub = _channel!.stream.listen(
       _onFrame,
@@ -426,11 +452,11 @@ class ProtocolConnection {
     Duration welcomeTimeout = const Duration(seconds: 15),
   }) async {
     try {
-      _channel = await _channelFactory(await _dialUri());
+      _channel = await _dial();
     } on WincheDatabaseException {
       rethrow; // a tokenProvider that itself reports an auth failure
     } catch (e) {
-      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
+      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: ${redacted(e)}');
     }
     _sub = _channel!.stream.listen(
       _onFrame,
@@ -565,7 +591,7 @@ class ProtocolConnection {
   }
 
   void _onError(Object error) {
-    _failAllPending('WebSocket error: $error');
+    _failAllPending('WebSocket error: ${redacted(error)}');
   }
 
   void _onDone() {
