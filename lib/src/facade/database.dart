@@ -307,7 +307,23 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
     for (final l in session.listeners) {
       l._clearPermanentFailure();
     }
-    await session.transport.reconnect();
+    try {
+      await session.transport.reconnect();
+    } on WincheDatabaseException catch (e) {
+      // A re-dial that fails on the network (server unreachable, socket closed
+      // mid-handshake) has already handed recovery to the reconnect loop, which
+      // reads the fresh token on its next dial: the connection comes back on its
+      // own, so this is not the app's error. Anything else (a refused token, a
+      // closed connection) still is.
+      if (e.code == WincheErrorCode.unavailable &&
+          identical(_session, session) &&
+          !session.isDisposed &&
+          !isDisposed &&
+          session.transport.connectionState != ConnectionState.closed) {
+        return;
+      }
+      rethrow;
+    }
   }
 
   /// Checks that the live connection still answers, and replaces it if not.

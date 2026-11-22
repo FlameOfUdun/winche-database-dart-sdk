@@ -13,14 +13,17 @@ import 'facade_harness.dart';
 /// A harness that mints a fresh [FakeChannel] per dial and records the URI each
 /// dial used, so a test can assert which auth token went onto the wire.
 class _AuthHarness {
-  _AuthHarness({required FutureOr<String> Function() tokenProvider}) {
+  _AuthHarness({
+    required FutureOr<String> Function() tokenProvider,
+    Future<void> Function(Duration)? sleeper,
+  }) {
     db = WincheDatabase(WincheApp('auth-switch'))
       ..debugBindStore(
         ConnectionConfig(
           uri: Uri.parse('ws://fake/documents/v1/ws'),
           tokenProvider: tokenProvider,
           channelFactory: _dial,
-          sleeper: (_) => Future<void>.value(),
+          sleeper: sleeper ?? (_) => Future<void>.value(),
           pingInterval: const Duration(hours: 1),
         ),
         MemoryLocalStore(),
@@ -36,12 +39,24 @@ class _AuthHarness {
 
   void Function(FakeChannel channel, Map<String, Object?> frame)? handler;
 
+  /// While set, each dial is closed before the welcome (server unreachable).
+  bool refuse = false;
+
+  /// While set, each dial is answered with this error instead of the welcome.
+  String? handshakeError;
+
   FakeChannel _dial(Uri uri) {
     tokens.add(uri.queryParameters['access_token']);
     final channel = FakeChannel()..startCapture();
     channels.add(channel);
+    final refused = refuse;
+    final error = handshakeError;
     scheduleMicrotask(
-      () => channel.serverSend({'type': 'welcome', 'connectionId': 'test'}),
+      () => refused
+          ? channel.serverClose()
+          : error != null
+              ? channel.serverSend({'type': 'error', 'error': wireError(error, 'refused')})
+              : channel.serverSend({'type': 'welcome', 'connectionId': 'test'}),
     );
     channel.onClientFrame = (frame) {
       scheduleMicrotask(() => handler?.call(channel, frame));
@@ -151,6 +166,72 @@ void main() {
       expect(snaps.last.data()!['name'], 'Alice');
 
       await sub.cancel();
+      await h.close();
+    });
+  });
+
+  group('token change while the network is down', () {
+    test('a refused re-dial is not reported; the connection comes back on its own', () async {
+      var token = 'token-a';
+      final sleeps = <Completer<void>>[];
+      final h = _AuthHarness(
+        tokenProvider: () => token,
+        // Backoffs wait until the test releases them.
+        sleeper: (_) {
+          final s = Completer<void>();
+          sleeps.add(s);
+          return s.future;
+        },
+      );
+      h.handler = (c, f) => h.respond(c, f, {});
+      await h.db.doc('users/u1').get(const GetOptions(source: Source.server));
+      await pump();
+      expect(h.db.connectionState, ConnectionState.ready);
+
+      // The app goes to the background; the socket drops and the redial fails.
+      h.refuse = true;
+      await h.channels.last.serverClose();
+      await pump();
+      expect(h.db.connectionState, isNot(ConnectionState.ready));
+
+      // The access token renews while the server is still out of reach.
+      token = 'token-b';
+      await expectLater(h.db.onTokenChanged(), completes);
+      await pump();
+
+      // The network returns: the next backoff ends and the dial gets in, with the fresh token.
+      h.refuse = false;
+      for (final s in sleeps) {
+        if (!s.isCompleted) s.complete();
+      }
+      await pump(20);
+      expect(h.db.connectionState, ConnectionState.ready);
+      expect(h.tokens.last, 'token-b');
+
+      await h.close();
+    });
+
+    test('a token the server refuses is still reported', () async {
+      var token = 'token-a';
+      final h = _AuthHarness(
+        tokenProvider: () => token,
+        sleeper: (_) => Completer<void>().future, // the loop waits; close() ends it
+      );
+      h.handler = (c, f) => h.respond(c, f, {});
+      await h.db.doc('users/u1').get(const GetOptions(source: Source.server));
+      await pump();
+
+      // The socket drops and the server refuses the token on the redial.
+      h.handshakeError = 'UNAUTHENTICATED';
+      await h.channels.last.serverClose();
+      await pump();
+      expect(h.db.connectionState, isNot(ConnectionState.ready));
+
+      token = 'token-b';
+      await expectLater(
+        h.db.onTokenChanged(),
+        throwsA(isA<WincheDatabaseException>().having((e) => e.code, 'code', WincheErrorCode.unauthenticated)),
+      );
       await h.close();
     });
   });

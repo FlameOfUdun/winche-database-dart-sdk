@@ -1,5 +1,10 @@
 # Changelog
 
+## 8.0.2
+
+**Fix: the token-refresh re-dial no longer reports a temporary connection failure as an error; the connection
+recovers on its own.**
+
 ## 8.0.1
 
 **Fix: a read answered after one of your writes no longer puts the cache back to before it.** A read sent just before a
