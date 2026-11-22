@@ -118,6 +118,9 @@ class ProtocolConnection {
     // `closed` is terminal. A retry loop scheduled just before close() must not
     // be able to reopen a connection whose socket and controllers are gone.
     if (_state == ConnectionState.closed && s != ConnectionState.closed) return;
+    // Connected, by whichever path (the loop, reconnect(), connect()): any loop
+    // still running is stale, and the next drop must be free to start a new one.
+    if (s == ConnectionState.ready) _reconnecting = null;
     _state = s;
     if (!_stateController.isClosed) _stateController.add(s);
   }
@@ -389,6 +392,17 @@ class ProtocolConnection {
       throw StateError('Cannot reconnect: connection is closed.');
     }
     _pingTimer?.cancel();
+    // This dial takes over from any reconnect loop, whether it is backing off or
+    // mid-dial: that loop stops when it wakes, leaving the socket to this path,
+    // and a failure here starts a fresh one.
+    _reconnecting = null;
+    final staleWelcome = _welcomeCompleter;
+    _welcomeCompleter = null;
+    if (staleWelcome != null && !staleWelcome.isCompleted) {
+      staleWelcome.completeError(
+        WincheDatabaseException.of(WincheErrorCode.unavailable, 'Reconnecting to apply a new auth token'),
+      );
+    }
     // Take the old socket down first: `disconnected` is what tells live feeds to
     // stop treating their subscriptions as delivering.
     final old = _channel;
@@ -406,6 +420,8 @@ class ProtocolConnection {
     _setState(ConnectionState.reconnecting);
     try {
       await _dialOnce();
+    } on _SupersededDial {
+      return; // a newer reconnect() owns the socket now
     } catch (e) {
       if (_state == ConnectionState.closed) return;
       unawaited(_reconnectLoop());
@@ -417,31 +433,82 @@ class ProtocolConnection {
 
   /// One dial + handshake on the reconnect path (shared by [reconnect] and
   /// [_reconnectLoop]). Leaves the state alone — callers own the transitions.
+  ///
+  /// The dial works on its own channel and takes over the shared socket only
+  /// while it is still the newest attempt (and, for a loop's dial, while
+  /// [current] holds). An attempt that was superseded — [reconnect] started
+  /// while it was dialling — closes its own channel, touches nothing shared and
+  /// throws [_SupersededDial].
   Future<void> _dialOnce({
     Duration welcomeTimeout = const Duration(seconds: 15),
+    bool Function()? current,
   }) async {
+    final attempt = ++_dialAttempt;
+    bool live() =>
+        attempt == _dialAttempt && _state != ConnectionState.closed && (current?.call() ?? true);
+    WebSocketChannel? channel;
+    StreamSubscription<dynamic>? sub;
     try {
-      _channel = await _channelFactory(await _dialUri());
-    } on WincheDatabaseException {
-      rethrow; // a tokenProvider that itself reports an auth failure
+      try {
+        channel = await _channelFactory(await _dialUri());
+      } on WincheDatabaseException {
+        rethrow; // a tokenProvider that itself reports an auth failure
+      } catch (e) {
+        throw _refusedUpgrade(e) ??
+            WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
+      }
+      if (!live()) throw const _SupersededDial();
+      final ch = channel;
+      final welcome = Completer<void>();
+      _channel = ch;
+      _welcomeCompleter = welcome;
+      // Frames from a socket that is no longer the connection's are dropped.
+      sub = _sub = ch.stream.listen(
+        (Object? data) {
+          if (identical(_channel, ch)) _onFrame(data);
+        },
+        onError: (Object e) {
+          if (identical(_channel, ch)) _onError(e);
+        },
+        onDone: () {
+          if (identical(_channel, ch)) _onDoneReconnect();
+        },
+      );
+      try {
+        await welcome.future.timeout(
+          welcomeTimeout,
+          onTimeout: () =>
+              throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Reconnect handshake timed out'),
+        );
+      } finally {
+        if (identical(_welcomeCompleter, welcome)) _welcomeCompleter = null;
+      }
+      if (!live()) throw const _SupersededDial();
     } catch (e) {
-      throw _refusedUpgrade(e) ??
-          WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
+      final ch = channel;
+      if (live()) {
+        rethrow; // the caller cleans up its own socket, as before
+      }
+      // Superseded: close our own socket and leave the shared one alone.
+      if (identical(_channel, ch) && ch != null) {
+        _channel = null;
+        _sub = null;
+      }
+      unawaited(sub?.cancel());
+      if (ch != null) {
+        unawaited(Future(() async {
+          try {
+            await ch.sink.close().timeout(const Duration(seconds: 1));
+          } catch (_) {}
+        }));
+      }
+      if (e is _SupersededDial) rethrow;
+      throw const _SupersededDial();
     }
-    _sub = _channel!.stream.listen(
-      _onFrame,
-      onError: _onError,
-      onDone: _onDoneReconnect,
-    );
-    _welcomeCompleter = Completer<void>();
-    await _welcomeCompleter!.future.timeout(
-      welcomeTimeout,
-      onTimeout: () {
-        _welcomeCompleter = null;
-        throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Reconnect handshake timed out');
-      },
-    );
   }
+
+  /// Bumped by every [_dialOnce]: only the newest attempt may own the socket.
+  int _dialAttempt = 0;
 
   /// Sends a graceful close.
   Future<void> close() async {
@@ -604,14 +671,35 @@ class ProtocolConnection {
   }
 
 
+  /// The generation of the [_reconnectLoop] that is running, if one is: a drop
+  /// during the first dial starts it from [_onDone] and again from [connect],
+  /// and two loops would dial twice as often.
+  ///
+  /// Cleared whenever the connection becomes ready, by any path, and when
+  /// [reconnect] dials, so a drop right after starts a new loop. A loop that
+  /// finds it is no longer the current one (after a backoff or a dial) stops:
+  /// it would otherwise act on a state that belongs to another path.
+  int? _reconnecting;
+  int _loopGeneration = 0;
+
   /// Exponential backoff reconnect loop. Runs until ready or closed.
   Future<void> _reconnectLoop() async {
-    if (_state == ConnectionState.closed) return;
+    if (_state == ConnectionState.closed || _reconnecting != null) return;
+    final loop = _reconnecting = ++_loopGeneration;
+    try {
+      await _runReconnectLoop(loop);
+    } finally {
+      if (_reconnecting == loop) _reconnecting = null;
+    }
+  }
+
+  Future<void> _runReconnectLoop(int loop) async {
     _setState(ConnectionState.reconnecting);
     var attempt = 0;
     const baseMs = 250;
+    bool current() => _reconnecting == loop;
 
-    while (_state == ConnectionState.reconnecting) {
+    while (current() && _state == ConnectionState.reconnecting) {
       // Backoff before attempt (skip on first immediate retry).
       if (attempt > 0) {
         final raw = baseMs * (1 << (attempt - 1));
@@ -628,19 +716,22 @@ class ProtocolConnection {
           Future<void>.value(_sleeper(delay)),
           _closed.future,
         ]);
-        if (_state != ConnectionState.reconnecting) return;
+        if (!current() || _state != ConnectionState.reconnecting) return;
       }
       attempt++;
 
       // Try to establish a new connection.
       try {
-        await _dialOnce();
+        await _dialOnce(current: current);
+        if (!current()) return;
 
-        // Connected!
+        // Connected! (`ready` clears the guard.)
         _setState(ConnectionState.ready);
         _startPing();
         return;
-      } catch (_) {
+      } catch (e) {
+        // Another path owns the socket now: leave it alone.
+        if (e is _SupersededDial || !current()) return;
         // Attempt failed — loop again if still reconnecting.
         _sub?.cancel();
         try {
@@ -714,4 +805,9 @@ class ProtocolConnection {
       completer.future.ignore();
     });
   }
+}
+
+/// Thrown by a dial that another path superseded; never reaches the app.
+class _SupersededDial implements Exception {
+  const _SupersededDial();
 }

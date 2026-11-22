@@ -5,6 +5,8 @@
 **Fix: the token-refresh re-dial no longer reports a temporary connection failure as an error; the connection
 recovers on its own.** A token the server refuses at the upgrade (HTTP 401 or 403) is reported as `unauthenticated`
 or `permissionDenied`, not `unavailable` (not in a browser, which does not say why a socket failed to open).
+A token refresh that re-dials while the reconnect loop is still dialling or backing off no longer leaves a second socket
+open that later takes the connection down: the loop's own dial closes its socket and the loop stops.
 
 ## 8.0.1
 

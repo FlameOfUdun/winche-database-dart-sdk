@@ -637,4 +637,115 @@ void main() {
     expect(conn.currentState, equals(ConnectionState.ready));
     await conn.close();
   });
+
+  test('a loop mid-dial when reconnect() connects first closes its own socket and leaves the connection alone',
+      () async {
+    final channels = <FakeChannel>[];
+    Completer<FakeChannel>? held;
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
+      channelFactory: (_) {
+        final c = FakeChannel()..startCapture();
+        channels.add(c);
+        scheduleMicrotask(() => c.serverSend({'type': 'welcome', 'connectionId': 'c${channels.length}'}));
+        // The second dial (the loop's) hangs until the test lets it through.
+        if (channels.length == 2) return (held = Completer<FakeChannel>()).future;
+        return c;
+      },
+      sleeper: (_) => Future<void>.value(),
+      pingInterval: const Duration(hours: 1),
+    ));
+    await _settle(conn.connect());
+
+    // The socket drops; the loop's dial is still opening when a token refresh re-dials and gets in.
+    await channels.first.serverClose();
+    await _until(() => held != null);
+    await conn.reconnect();
+    expect(conn.currentState, ConnectionState.ready);
+    final healthy = channels[2];
+
+    // The loop's dial now opens: it must close its own socket, not take over the healthy one.
+    final stale = channels[1];
+    held!.complete(stale);
+    await stale.sink.done.timeout(const Duration(seconds: 2));
+    await pump();
+    expect(conn.currentState, ConnectionState.ready);
+
+    // That socket closing later does not tear the connection down, and requests still go to the healthy one.
+    await stale.serverClose();
+    await pump();
+    expect(conn.currentState, ConnectionState.ready);
+    final f = conn.request({'type': 'get', 'path': 'users/u1'});
+    await pump();
+    final sent = healthy.clientFrames.last;
+    expect(sent['type'], 'get');
+    healthy.serverSend({'type': 'response', 'id': sent['id'], 'result': <String, Object?>{}});
+    await f;
+    expect(channels, hasLength(3));
+    await conn.close();
+  });
+
+  test('a loop backing off when reconnect() connects first stops, and a later drop still recovers', () async {
+    var dials = 0;
+    final channels = <FakeChannel>[];
+    final sleeps = <Completer<void>>[];
+    var refuse = false;
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
+      channelFactory: (_) {
+        dials++;
+        final c = FakeChannel()..startCapture();
+        channels.add(c);
+        final refused = refuse;
+        scheduleMicrotask(() => refused ? c.serverClose() : c.serverSend({'type': 'welcome', 'connectionId': 'c$dials'}));
+        return c;
+      },
+      // Backoffs wait until the test releases them.
+      sleeper: (_) {
+        final s = Completer<void>();
+        sleeps.add(s);
+        return s.future;
+      },
+      pingInterval: const Duration(hours: 1),
+    ));
+    await _settle(conn.connect());
+    expect(conn.currentState, ConnectionState.ready);
+
+    // The socket drops and the first redial is refused: the loop backs off.
+    refuse = true;
+    await channels.last.serverClose();
+    await _until(() => sleeps.length == 1);
+    expect(conn.currentState, ConnectionState.reconnecting);
+
+    // A token refresh re-dials and gets in while that loop sleeps.
+    refuse = false;
+    await conn.reconnect();
+    expect(conn.currentState, ConnectionState.ready);
+
+    // The socket drops again; then the old loop wakes.
+    await channels.last.serverClose();
+    sleeps.first.complete();
+    await _until(() => conn.currentState == ConnectionState.ready);
+    expect(conn.currentState, ConnectionState.ready, reason: 'a stale loop must not leave the connection disconnected');
+    await conn.close();
+  });
+}
+
+Future<void> _settle(Future<void> f) async {
+  try {
+    await f;
+  } catch (_) {}
+}
+
+Future<void> _until(bool Function() condition) async {
+  for (var i = 0; i < 200 && !condition(); i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  expect(condition(), isTrue);
+}
+
+Future<void> pump([int times = 6]) async {
+  for (var i = 0; i < times; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
