@@ -5,3 +5,6 @@ const bool webSocketHeadersSupported = false;
 
 /// Opens [uri]; a browser can't send [headers].
 WebSocketChannel connectWebSocket(Uri uri, Map<String, String> headers) => WebSocketChannel.connect(uri);
+
+/// Always null: a browser does not say why a WebSocket failed to open.
+int? refusedUpgradeStatus(Object error) => null;

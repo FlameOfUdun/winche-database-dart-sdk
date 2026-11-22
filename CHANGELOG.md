@@ -21,12 +21,19 @@ replaced it. Each loop now knows whether it is still the current one, and any pa
 for the next.
 
 **Fix (also in 8.0.2): the token-refresh re-dial no longer reports a temporary connection failure as an error; the
-connection recovers on its own.** A refused token, or a closed connection, is still reported.
+connection recovers on its own.** A refused token, or a closed connection, is still reported: a server that refuses
+the access or Integrity token at the upgrade (HTTP 401 or 403) is now reported as `unauthenticated` or
+`permissionDenied`, not `unavailable` (not in a browser, which does not say why a socket failed to open).
+
+**Fix: a reconnect superseded mid-dial no longer takes over the connection.** When a token refresh re-dialled while
+the reconnect loop's dial was still opening, the loop's socket replaced the new one when it opened, and its later
+close took the connection down. It now closes its own socket, and it is not counted as a failed dial.
 
 ## 8.0.2
 
 **Fix: the token-refresh re-dial no longer reports a temporary connection failure as an error; the connection
-recovers on its own.**
+recovers on its own.** A token the server refuses at the upgrade (HTTP 401 or 403) is reported as `unauthenticated`
+or `permissionDenied`, not `unavailable` (not in a browser, which does not say why a socket failed to open).
 
 ## 8.0.1
 
