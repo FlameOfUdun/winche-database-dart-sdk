@@ -145,6 +145,9 @@ class ProtocolConnection {
     // `closed` is terminal. A retry loop scheduled just before close() must not
     // be able to reopen a connection whose socket and controllers are gone.
     if (_state == ConnectionState.closed && s != ConnectionState.closed) return;
+    // Connected, by whichever path (the loop, reconnect(), connect()): any loop
+    // still running is stale, and the next drop must be free to start a new one.
+    if (s == ConnectionState.ready) _reconnecting = null;
     _state = s;
     if (!_stateController.isClosed) _stateController.add(s);
   }
@@ -457,6 +460,9 @@ class ProtocolConnection {
     }
     if (_state == ConnectionState.closed) return;
 
+    // This dial takes over from any loop still backing off: that loop stops
+    // when it wakes, and a failure here starts a fresh one.
+    _reconnecting = null;
     _setState(ConnectionState.reconnecting);
     try {
       await _dialOnce();
@@ -636,30 +642,35 @@ class ProtocolConnection {
   }
 
 
-  /// Whether [_reconnectLoop] is running: a drop during the first dial starts
-  /// it from [_onDone] and again from [connect], and two loops would dial
-  /// twice as often.
-  /// Cleared the moment the loop connects (before `ready` is announced), so a
-  /// drop right after starts a new one.
-  Object? _reconnecting;
+  /// The generation of the [_reconnectLoop] that is running, if one is: a drop
+  /// during the first dial starts it from [_onDone] and again from [connect],
+  /// and two loops would dial twice as often.
+  ///
+  /// Cleared whenever the connection becomes ready, by any path, and when
+  /// [reconnect] dials, so a drop right after starts a new loop. A loop that
+  /// finds it is no longer the current one (after a backoff or a dial) stops:
+  /// it would otherwise act on a state that belongs to another path.
+  int? _reconnecting;
+  int _loopGeneration = 0;
 
   /// Exponential backoff reconnect loop. Runs until ready or closed.
   Future<void> _reconnectLoop() async {
     if (_state == ConnectionState.closed || _reconnecting != null) return;
-    final loop = _reconnecting = Object();
+    final loop = _reconnecting = ++_loopGeneration;
     try {
-      await _runReconnectLoop();
+      await _runReconnectLoop(loop);
     } finally {
-      if (identical(_reconnecting, loop)) _reconnecting = null;
+      if (_reconnecting == loop) _reconnecting = null;
     }
   }
 
-  Future<void> _runReconnectLoop() async {
+  Future<void> _runReconnectLoop(int loop) async {
     _setState(ConnectionState.reconnecting);
     var attempt = 0;
     const baseMs = 250;
+    bool current() => _reconnecting == loop;
 
-    while (_state == ConnectionState.reconnecting) {
+    while (current() && _state == ConnectionState.reconnecting) {
       // Backoff before attempt (skip on first immediate retry).
       if (attempt > 0) {
         final raw = baseMs * (1 << (attempt - 1));
@@ -676,20 +687,22 @@ class ProtocolConnection {
           Future<void>.value(_sleeper(delay)),
           _closed.future,
         ]);
-        if (_state != ConnectionState.reconnecting) return;
+        if (!current() || _state != ConnectionState.reconnecting) return;
       }
       attempt++;
 
       // Try to establish a new connection.
       try {
         await _dialOnce();
+        if (!current()) return;
 
-        // Connected!
-        _reconnecting = null;
+        // Connected! (`ready` clears the guard.)
         _setState(ConnectionState.ready);
         _startPing();
         return;
       } catch (_) {
+        // Another path owns the socket now: leave it alone.
+        if (!current()) return;
         // Attempt failed — loop again if still reconnecting.
         _sub?.cancel();
         try {

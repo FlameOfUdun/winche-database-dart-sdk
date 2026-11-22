@@ -254,7 +254,7 @@ class _HomePageState extends State<HomePage> {
     _syncSub = db.syncEvents.listen((event) {
       _refreshPending();
       if (event is WriteFailed) {
-        _snack('Write failed: ${event.error.status} — ${event.error.message}');
+        _snack('Write failed: ${event.error.code.wireName} — ${event.error.message}');
       } else if (event is WriteConflict) {
         _snack(
           'Write conflict: ${event.error.message} — discarding local write',
@@ -310,8 +310,8 @@ class _HomePageState extends State<HomePage> {
   Future<void> _runOp(String label, Future<void> Function() fn) async {
     try {
       await fn();
-    } on WincheProtocolException catch (e) {
-      _snack('$label failed: ${e.status}');
+    } on WincheDatabaseException catch (e) {
+      _snack('$label failed: ${e.code.wireName}');
     } catch (e) {
       _snack('$label failed: $e');
     }
@@ -359,8 +359,8 @@ class _HomePageState extends State<HomePage> {
         RecordFilter.done => 'done',
       };
       _snack('Server count ($filterLabel): $n');
-    } on WincheProtocolException catch (e) {
-      _snack('Count failed: ${e.status} — ${e.message}');
+    } on WincheDatabaseException catch (e) {
+      _snack('Count failed: ${e.code.wireName} — ${e.message}');
     } catch (e) {
       _snack('Count failed: $e');
     }

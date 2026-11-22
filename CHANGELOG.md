@@ -15,6 +15,19 @@ instead of the same token until it expires; once per run of failures, and the re
 **Fix: no tokens in error messages.** A failed dial's error (`Connection to '…' was not upgraded`) no longer includes
 the address's query, so the access and Integrity tokens don't reach logs.
 
+**Fix: a token refresh no longer leaves the connection disconnected.** When a token refresh re-dialled and got in
+while the reconnect loop was waiting out its backoff, and the socket then dropped, the old loop stopped and none
+replaced it. Each loop now knows whether it is still the current one, and any path that connects clears the way
+for the next.
+
+**Fix (also in 8.0.2): the token-refresh re-dial no longer reports a temporary connection failure as an error; the
+connection recovers on its own.** A refused token, or a closed connection, is still reported.
+
+## 8.0.2
+
+**Fix: the token-refresh re-dial no longer reports a temporary connection failure as an error; the connection
+recovers on its own.**
+
 ## 8.0.1
 
 **Fix: a read answered after one of your writes no longer puts the cache back to before it.** A read sent just before a

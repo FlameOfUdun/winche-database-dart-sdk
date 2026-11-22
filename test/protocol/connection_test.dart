@@ -410,8 +410,10 @@ void main() {
         dials++;
         final c = FakeChannel()..startCapture();
         channels.add(c);
-        // The first three are refused at the upgrade (closed before the welcome); then the server lets it in.
-        scheduleMicrotask(() => dials <= 3 ? c.serverClose() : c.serverSend({'type': 'welcome', 'connectionId': 'c$dials'}));
+        // The first three are refused at the upgrade (closed before the welcome), then the server lets it in;
+        // after the next drop it refuses one more (the fifth).
+        final refused = dials <= 3 || dials == 5;
+        scheduleMicrotask(() => refused ? c.serverClose() : c.serverSend({'type': 'welcome', 'connectionId': 'c$dials'}));
         return c;
       },
       sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
@@ -423,11 +425,55 @@ void main() {
     expect(dials, 4);
 
     // A later run of failures counts from one again.
-    final before = dials;
     await channels.last.serverClose(1013);
     await conn.states.firstWhere((s) => s == ConnectionState.ready).timeout(const Duration(seconds: 5));
-    expect(dials, before + 1);
-    expect(failures, [1, 2, 3]);
+    expect(dials, 6);
+    expect(failures, [1, 2, 3, 1]);
+    await conn.close();
+  });
+
+  test('a loop backing off when reconnect() connects first stops, and a later drop still recovers', () async {
+    var dials = 0;
+    final channels = <FakeChannel>[];
+    final sleeps = <Completer<void>>[];
+    var refuse = false;
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
+      channelFactory: (_) {
+        dials++;
+        final c = FakeChannel()..startCapture();
+        channels.add(c);
+        final refused = refuse;
+        scheduleMicrotask(() => refused ? c.serverClose() : c.serverSend({'type': 'welcome', 'connectionId': 'c$dials'}));
+        return c;
+      },
+      // Backoffs wait until the test releases them.
+      sleeper: (_) {
+        final s = Completer<void>();
+        sleeps.add(s);
+        return s.future;
+      },
+      pingInterval: const Duration(hours: 1),
+    ));
+    await _settle(conn.connect());
+    expect(conn.currentState, ConnectionState.ready);
+
+    // The socket drops and the first redial is refused: the loop backs off.
+    refuse = true;
+    await channels.last.serverClose();
+    await _until(() => sleeps.length == 1);
+    expect(conn.currentState, ConnectionState.reconnecting);
+
+    // A token refresh re-dials and gets in while that loop sleeps.
+    refuse = false;
+    await conn.reconnect();
+    expect(conn.currentState, ConnectionState.ready);
+
+    // The socket drops again; then the old loop wakes.
+    await channels.last.serverClose();
+    sleeps.first.complete();
+    await _until(() => conn.currentState == ConnectionState.ready);
+    expect(conn.currentState, ConnectionState.ready, reason: 'a stale loop must not leave the connection disconnected');
     await conn.close();
   });
 
@@ -736,4 +782,17 @@ void main() {
     expect(conn.currentState, equals(ConnectionState.ready));
     await conn.close();
   });
+}
+
+Future<void> _settle(Future<void> f) async {
+  try {
+    await f;
+  } catch (_) {}
+}
+
+Future<void> _until(bool Function() condition) async {
+  for (var i = 0; i < 200 && !condition(); i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  expect(condition(), isTrue);
 }
