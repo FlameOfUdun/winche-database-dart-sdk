@@ -5,7 +5,12 @@
 **Integrity.** The live connection carries the app's Integrity token (the `X-Winche-Integrity` header when it opens;
 in a browser, which can't set it, `winche_integrity` in its address), fresh on every reconnect, so a project that
 enforces Integrity on the database lets the app in. Set it up with `app.useIntegrity(…)` (winche_core 1.1.0, now the
-minimum).
+minimum). When two dials in a row are refused before the connection opens (a server refuses a revoked token at
+the upgrade), the token they sent is dropped (`integrity.invalidate(ifToken:)`), so the next dial gets a new one
+instead of the same token until it expires; once per run of failures, and the reconnect backoff applies as before.
+
+**Fix: one reconnect loop, not two.** A connection dropped during its first dial started the reconnect loop twice
+(from the drop and from `connect()`), dialling twice as often.
 
 **Fix: no tokens in error messages.** A failed dial's error (`Connection to '…' was not upgraded`) no longer includes
 the address's query, so the access and Integrity tokens don't reach logs.

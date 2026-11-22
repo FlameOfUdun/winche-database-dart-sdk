@@ -40,7 +40,17 @@ final class ConnectionConfig {
     this.sleeper,
     this.dialUri,
     this.dialHeaders,
+    this.onDialFailed,
   });
+
+  /// Called when a dial fails before the server's welcome (the upgrade
+  /// refused, the server unreachable, the handshake timed out), with how many
+  /// have failed in a row; a dial that gets its welcome starts the count over.
+  /// Not called for a dial that never started (no auth token to send). The
+  /// app's Integrity token is dropped from here after repeated failures, since
+  /// a server that refuses it refuses the upgrade (the reconnect backoff still
+  /// applies).
+  final void Function(int failuresInARow)? onDialFailed;
 
   /// Rewrites the address on every (re)dial, after the auth token is added:
   /// in a browser, the app's Integrity token (`WincheIntegrity.withToken`),
@@ -197,11 +207,24 @@ class ProtocolConnection {
     return config.dialUri == null ? uri : await config.dialUri!(uri);
   }
 
-  /// Opens a channel to the dial URI with the dial headers.
-  Future<WebSocketChannel> _dial() async {
-    final uri = await _dialUri();
-    final headers = await config.dialHeaders?.call() ?? const <String, String>{};
-    return _channelFactory(uri, headers);
+  int _failedDials = 0;
+
+  /// Runs one dial + handshake ([body], given the dial to make), counting the
+  /// dials that fail before the welcome for [ConnectionConfig.onDialFailed].
+  Future<void> _attempt(Future<void> Function(Future<WebSocketChannel> Function() dial) body) async {
+    var started = false;
+    try {
+      await body(() async {
+        final uri = await _dialUri();
+        final headers = await config.dialHeaders?.call() ?? const <String, String>{};
+        started = true;
+        return _channelFactory(uri, headers);
+      });
+      _failedDials = 0;
+    } catch (_) {
+      if (started && _state != ConnectionState.closed) config.onDialFailed?.call(++_failedDials);
+      rethrow;
+    }
   }
 
   /// [error] as text with the query taken off any address in it: a failed
@@ -232,9 +255,9 @@ class ProtocolConnection {
   }
 
   /// The first dial + handshake. Leaves state transitions to [connect].
-  Future<void> _initialDial(Duration welcomeTimeout) async {
+  Future<void> _initialDial(Duration welcomeTimeout) => _attempt((dial) async {
     try {
-      _channel = await _dial();
+      _channel = await dial();
     } catch (e) {
       // Channel factory threw (e.g. WebSocketChannelException on Windows when
       // the remote port is refused before the stream is even subscribed to).
@@ -264,7 +287,7 @@ class ProtocolConnection {
       _sub?.cancel();
       rethrow;
     }
-  }
+  });
 
   /// Sends a client frame and waits for the server's response or error.
   ///
@@ -450,9 +473,9 @@ class ProtocolConnection {
   /// [_reconnectLoop]). Leaves the state alone — callers own the transitions.
   Future<void> _dialOnce({
     Duration welcomeTimeout = const Duration(seconds: 15),
-  }) async {
+  }) => _attempt((dial) async {
     try {
-      _channel = await _dial();
+      _channel = await dial();
     } on WincheDatabaseException {
       rethrow; // a tokenProvider that itself reports an auth failure
     } catch (e) {
@@ -471,7 +494,7 @@ class ProtocolConnection {
         throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Reconnect handshake timed out');
       },
     );
-  }
+  });
 
   /// Sends a graceful close.
   Future<void> close() async {
@@ -613,9 +636,25 @@ class ProtocolConnection {
   }
 
 
+  /// Whether [_reconnectLoop] is running: a drop during the first dial starts
+  /// it from [_onDone] and again from [connect], and two loops would dial
+  /// twice as often.
+  /// Cleared the moment the loop connects (before `ready` is announced), so a
+  /// drop right after starts a new one.
+  Object? _reconnecting;
+
   /// Exponential backoff reconnect loop. Runs until ready or closed.
   Future<void> _reconnectLoop() async {
-    if (_state == ConnectionState.closed) return;
+    if (_state == ConnectionState.closed || _reconnecting != null) return;
+    final loop = _reconnecting = Object();
+    try {
+      await _runReconnectLoop();
+    } finally {
+      if (identical(_reconnecting, loop)) _reconnecting = null;
+    }
+  }
+
+  Future<void> _runReconnectLoop() async {
     _setState(ConnectionState.reconnecting);
     var attempt = 0;
     const baseMs = 250;
@@ -646,6 +685,7 @@ class ProtocolConnection {
         await _dialOnce();
 
         // Connected!
+        _reconnecting = null;
         _setState(ConnectionState.ready);
         _startPing();
         return;

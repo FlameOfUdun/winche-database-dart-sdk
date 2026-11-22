@@ -40,12 +40,15 @@ Or add them to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  winche_core: ^1.0.0
-  winche_database: ^8.0.0
+  winche_core: ^1.1.0
+  winche_database: ^8.1.0
 ```
 
 `winche_core` is not optional. It owns the app, the endpoints and the session every Winche package binds to, so an
 app always imports it directly.
+
+When the app uses Integrity (`app.useIntegrity(…)`, see `winche_core`), the live connection carries the app's
+Integrity token too.
 
 ## Architecture
 

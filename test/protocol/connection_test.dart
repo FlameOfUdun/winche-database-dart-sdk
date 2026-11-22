@@ -399,6 +399,38 @@ void main() {
     await conn.close();
   });
 
+  test('onDialFailed counts dials that fail before the welcome, in a row; one loop redials, not two', () async {
+    var dials = 0;
+    final failures = <int>[];
+    final channels = <FakeChannel>[];
+    final conn = ProtocolConnection(ConnectionConfig(
+      uri: Uri.parse('ws://fake/documents/v1/ws'),
+      onDialFailed: failures.add,
+      channelFactory: (_) {
+        dials++;
+        final c = FakeChannel()..startCapture();
+        channels.add(c);
+        // The first three are refused at the upgrade (closed before the welcome); then the server lets it in.
+        scheduleMicrotask(() => dials <= 3 ? c.serverClose() : c.serverSend({'type': 'welcome', 'connectionId': 'c$dials'}));
+        return c;
+      },
+      sleeper: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+      pingInterval: const Duration(hours: 1),
+    ));
+    await expectLater(conn.connect(), throwsA(isA<WincheDatabaseException>()));
+    await conn.states.firstWhere((s) => s == ConnectionState.ready);
+    expect(failures, [1, 2, 3]);
+    expect(dials, 4);
+
+    // A later run of failures counts from one again.
+    final before = dials;
+    await channels.last.serverClose(1013);
+    await conn.states.firstWhere((s) => s == ConnectionState.ready).timeout(const Duration(seconds: 5));
+    expect(dials, before + 1);
+    expect(failures, [1, 2, 3]);
+    await conn.close();
+  });
+
   test("a failed dial's error keeps the address but not its query (no tokens in logs)", () async {
     final conn = ProtocolConnection(ConnectionConfig(
       uri: Uri.parse('wss://api.example.com/documents/v1/ws'),

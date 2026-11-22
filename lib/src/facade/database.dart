@@ -191,12 +191,14 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
       rethrow;
     }
 
+    final integrity = _IntegrityDial(app.integrity);
     await _bind(
       ConnectionConfig(
         uri: endpoint,
         // The app's Integrity token, fresh on every (re)dial: a header, or in the address in a browser.
-        dialHeaders: webSocketHeadersSupported ? app.integrity.webSocketHeaders : null,
-        dialUri: webSocketHeadersSupported ? null : app.integrity.withToken,
+        dialHeaders: integrity.headers,
+        dialUri: integrity.uri,
+        onDialFailed: integrity.failed,
         tokenProvider: () async {
           final token = await session.token();
           if (token == null) {
@@ -351,13 +353,15 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
     final session = _session;
     if (session != null || !_config.allowSignedOut || isDisposed) return session;
     final endpoint = _endpoint;
+    final integrity = _IntegrityDial(app.integrity);
     // No previous session, so _bind completes synchronously and _session is set on return.
     unawaited(_bind(
       ConnectionConfig(
         uri: endpoint,
         // The app's Integrity token, fresh on every (re)dial: a header, or in the address in a browser.
-        dialHeaders: webSocketHeadersSupported ? app.integrity.webSocketHeaders : null,
-        dialUri: webSocketHeadersSupported ? null : app.integrity.withToken,
+        dialHeaders: integrity.headers,
+        dialUri: integrity.uri,
+        onDialFailed: integrity.failed,
         pingInterval: _config.pingInterval,
         requestTimeout: _config.requestTimeout,
         maxBackoff: _config.maxBackoff,
@@ -577,5 +581,43 @@ final class WincheDatabase extends WincheService implements WincheSessionConsume
     await _connectionRelay.close();
     await _syncRelay.close();
     await super.dispose(); // always last
+  }
+}
+
+/// The app's Integrity token on a connection's dials: a header, or in the
+/// address in a browser (which can't set a WebSocket's headers). When a second
+/// dial in a row fails before the welcome, the token it sent is dropped
+/// (`invalidate(ifToken:)`), so the next dial gets a new one: a server that
+/// refuses a token (revoked early, say) refuses the upgrade, and the token
+/// would otherwise be sent until it expires. Once per run of failures: a
+/// network blip, or a server down for a while, shouldn't cost a new proof each
+/// time. The reconnect backoff applies as before.
+final class _IntegrityDial {
+  _IntegrityDial(this._integrity);
+
+  final WincheIntegrity _integrity;
+
+  /// The token the last dial sent, if any.
+  String? _sent;
+
+  Future<Map<String, String>> Function()? get headers => webSocketHeadersSupported ? _headers : null;
+
+  Future<Uri> Function(Uri)? get uri => webSocketHeadersSupported ? null : _uri;
+
+  Future<Map<String, String>> _headers() async {
+    final headers = await _integrity.webSocketHeaders();
+    _sent = headers['X-Winche-Integrity'];
+    return headers;
+  }
+
+  Future<Uri> _uri(Uri url) async {
+    final withToken = await _integrity.withToken(url);
+    _sent = withToken.queryParameters['winche_integrity'];
+    return withToken;
+  }
+
+  void failed(int inARow) {
+    final sent = _sent;
+    if (inARow == 2 && sent != null) _integrity.invalidate(ifToken: sent);
   }
 }
