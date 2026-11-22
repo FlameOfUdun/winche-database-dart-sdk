@@ -6,6 +6,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'exceptions.dart';
 import 'messages.dart';
+import 'web_socket_dial.dart';
 
 /// Connection lifecycle state.
 enum ConnectionState {
@@ -92,7 +93,7 @@ class ProtocolConnection {
   final FutureOr<void> Function(Duration) _sleeper;
 
   static Future<WebSocketChannel> _defaultFactory(Uri uri) async {
-    final channel = WebSocketChannel.connect(uri);
+    final channel = connectWebSocket(uri);
     // Suppress unhandled errors on the `ready` future.  If the connection
     // fails, the error surfaces both here and via the channel stream (where our
     // listener handles it with `_onError` / `_onDone`).  Without this ignore
@@ -207,7 +208,8 @@ class ProtocolConnection {
       // the remote port is refused before the stream is even subscribed to).
       // Normalise to `unavailable` so callers don't need to know about
       // transport-layer exception types.
-      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
+      throw _refusedUpgrade(e) ??
+          WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
     }
     _sub = _channel!.stream.listen(
       _onFrame,
@@ -423,7 +425,8 @@ class ProtocolConnection {
     } on WincheDatabaseException {
       rethrow; // a tokenProvider that itself reports an auth failure
     } catch (e) {
-      throw WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
+      throw _refusedUpgrade(e) ??
+          WincheDatabaseException.of(WincheErrorCode.unavailable, 'Failed to open WebSocket channel: $e');
     }
     _sub = _channel!.stream.listen(
       _onFrame,
@@ -557,7 +560,28 @@ class ProtocolConnection {
     }
   }
 
+  /// The error for a dial the server refused at the WebSocket upgrade: HTTP 401
+  /// (a bad access or Integrity token) is `unauthenticated` and 403
+  /// `permissionDenied`, so the app hears it instead of a retryable
+  /// `unavailable`. Null for any other failure (and always in a browser, which
+  /// does not say why a WebSocket failed to open).
+  static WincheDatabaseException? _refusedUpgrade(Object error) => switch (refusedUpgradeStatus(error)) {
+        401 => WincheDatabaseException.of(
+            WincheErrorCode.unauthenticated, 'The server refused the connection (HTTP 401)'),
+        403 => WincheDatabaseException.of(
+            WincheErrorCode.permissionDenied, 'The server refused the connection (HTTP 403)'),
+        _ => null,
+      };
+
   void _onError(Object error) {
+    // A refused upgrade fails the handshake with its own code (see
+    // [_refusedUpgrade]) before the close that follows reports `unavailable`.
+    final refused = _refusedUpgrade(error);
+    final welcome = _welcomeCompleter;
+    if (refused != null && welcome != null && !welcome.isCompleted) {
+      _welcomeCompleter = null;
+      welcome.completeError(refused);
+    }
     _failAllPending('WebSocket error: $error');
   }
 

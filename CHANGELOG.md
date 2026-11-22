@@ -3,7 +3,8 @@
 ## 8.0.2
 
 **Fix: the token-refresh re-dial no longer reports a temporary connection failure as an error; the connection
-recovers on its own.**
+recovers on its own.** A token the server refuses at the upgrade (HTTP 401 or 403) is reported as `unauthenticated`
+or `permissionDenied`, not `unavailable` (not in a browser, which does not say why a socket failed to open).
 
 ## 8.0.1
 

@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import '../support/wire_error.dart';
 
 import 'package:test/test.dart';
+import 'package:web_socket_channel/io.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:winche_core/winche_core.dart';
 import 'package:winche_database/winche_database.dart';
 import 'package:winche_database/src/protocol/connection.dart'
@@ -45,8 +48,15 @@ class _AuthHarness {
   /// While set, each dial is answered with this error instead of the welcome.
   String? handshakeError;
 
-  FakeChannel _dial(Uri uri) {
+  /// While set, each dial goes to this real address instead (a server that
+  /// refuses the upgrade, or a port nothing listens on), so it fails with the
+  /// exceptions dart:io and web_socket_channel really throw.
+  Uri? realServer;
+
+  WebSocketChannel _dial(Uri uri) {
     tokens.add(uri.queryParameters['access_token']);
+    final real = realServer;
+    if (real != null) return IOWebSocketChannel.connect(real)..ready.ignore();
     final channel = FakeChannel()..startCapture();
     channels.add(channel);
     final refused = refuse;
@@ -208,6 +218,61 @@ void main() {
       expect(h.db.connectionState, ConnectionState.ready);
       expect(h.tokens.last, 'token-b');
 
+      await h.close();
+    });
+
+    test('a token refused at the upgrade (HTTP 401) is reported as unauthenticated', () async {
+      // The real server refuses a bad access or Integrity token at the WebSocket upgrade.
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) {
+        request.response
+          ..statusCode = HttpStatus.unauthorized
+          ..close();
+      });
+      var token = 'token-a';
+      final h = _AuthHarness(
+        tokenProvider: () => token,
+        sleeper: (_) => Completer<void>().future, // the loop waits; close() ends it
+      );
+      h.handler = (c, f) => h.respond(c, f, {});
+      await h.db.doc('users/u1').get(const GetOptions(source: Source.server));
+      await pump();
+
+      // The socket drops and every redial now reaches the server, which refuses the token.
+      h.realServer = Uri.parse('ws://127.0.0.1:${server.port}/documents/v1/ws');
+      await h.channels.last.serverClose();
+      await pump();
+      expect(h.db.connectionState, isNot(ConnectionState.ready));
+
+      token = 'token-b';
+      await expectLater(
+        h.db.onTokenChanged(),
+        throwsA(isA<WincheDatabaseException>().having((e) => e.code, 'code', WincheErrorCode.unauthenticated)),
+      );
+      await h.close();
+      await server.close(force: true);
+    });
+
+    test('a server out of reach (connection refused) is still not reported', () async {
+      // A port nothing listens on: the dial fails the way a real network failure does.
+      final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = probe.port;
+      await probe.close();
+      var token = 'token-a';
+      final h = _AuthHarness(
+        tokenProvider: () => token,
+        sleeper: (_) => Completer<void>().future, // the loop waits; close() ends it
+      );
+      h.handler = (c, f) => h.respond(c, f, {});
+      await h.db.doc('users/u1').get(const GetOptions(source: Source.server));
+      await pump();
+
+      h.realServer = Uri.parse('ws://127.0.0.1:$port/documents/v1/ws');
+      await h.channels.last.serverClose();
+      await pump();
+
+      token = 'token-b';
+      await expectLater(h.db.onTokenChanged(), completes);
       await h.close();
     });
 
