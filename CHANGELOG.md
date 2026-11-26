@@ -1,8 +1,8 @@
+# Changelog
+
 ## 8.1.1
 
 - Needs winche_core 1.1.1: its error messages never carry a signed link's signature, a token or a password.
-
-# Changelog
 
 ## 8.1.0
 
